@@ -1769,12 +1769,12 @@ git commit -m "feat(backend): LLM config CRUD + test-connection endpoint"
 
 - [ ] **Step 1: Init Nuxt project**
 
-Run: `cd frontend && npx nuxi@latest init . --package-manager pnpm --no-git-init --force`
+Run: `cd frontend && npx nuxi@latest init . --package-manager npm --no-git-init --force --template minimal`
 Expected: creates Nuxt project files in current dir.
 
 - [ ] **Step 2: Install Tailwind v4 + Pinia**
 
-Run: `cd frontend && pnpm add tailwindcss @tailwindcss/vite @pinia/nuxt pinia`
+Run: `cd frontend && npm install tailwindcss @tailwindcss/vite @pinia/nuxt pinia`
 Expected: installed.
 
 - [ ] **Step 3: Replace `frontend/nuxt.config.ts`**
@@ -1853,7 +1853,7 @@ const auth = useAuthStore()
 
 - [ ] **Step 7: Dev smoke test**
 
-Run: `cd frontend && pnpm run dev`
+Run: `cd frontend && npm run dev`
 Expected: Nuxt serves on `http://localhost:3000`. Open browser — home page renders "syifa — PhD study companion" and a login link. Stop with Ctrl-C.
 
 - [ ] **Step 8: Commit**
@@ -1999,7 +1999,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
 - [ ] **Step 4: Smoke test**
 
-Run: `cd frontend && pnpm run dev`
+Run: `cd frontend && npm run dev`
 Expected: app still loads at `/`. Visiting `/settings/llm` redirects to `/login` (once login page exists; for now it 404s — that's fine).
 
 - [ ] **Step 5: Commit**
@@ -2133,7 +2133,7 @@ async function google() {
 - [ ] **Step 3: Smoke test**
 
 Run backend: `cd backend && source .venv/bin/activate && uvicorn app.main:app --reload`
-Run frontend (new terminal): `cd frontend && pnpm run dev`
+Run frontend (new terminal): `cd frontend && npm run dev`
 Open `http://localhost:3000/signup`. Sign up with a dummy account. Expect redirect to `/` with "Welcome, <email>".
 
 - [ ] **Step 4: Commit**
@@ -2324,7 +2324,7 @@ git commit -m "feat(frontend): LLM config settings page with test button"
 
 - [ ] **Step 1: Install Playwright**
 
-Run: `cd frontend && pnpm add -D @playwright/test && pnpm exec playwright install chromium`
+Run: `cd frontend && npm install -D @playwright/test && npx playwright install chromium`
 Expected: installed + browser downloaded.
 
 - [ ] **Step 2: Write `frontend/playwright.config.ts`**
@@ -2337,7 +2337,7 @@ export default defineConfig({
   timeout: 30_000,
   use: { baseURL: "http://localhost:3000", headless: true },
   webServer: {
-    command: "pnpm run dev",
+    command: "npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
@@ -2400,13 +2400,13 @@ Ensure `scripts` contains:
 - [ ] **Step 5: Run Playwright (backend must be running)**
 
 Terminal A: `cd backend && source .venv/bin/activate && uvicorn app.main:app`
-Terminal B: `cd frontend && pnpm run test:e2e`
+Terminal B: `cd frontend && npm run test:e2e`
 Expected: 1 test passes.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/playwright.config.ts frontend/tests/ frontend/package.json frontend/pnpm-lock.yaml
+git add frontend/playwright.config.ts frontend/tests/ frontend/package.json frontend/package-lock.json
 git commit -m "test(frontend): Playwright e2e for foundation flow"
 ```
 
@@ -2440,8 +2440,8 @@ uvicorn app.main:app --reload                            # :8000
 
 # 3. Frontend (new terminal)
 cd frontend
-pnpm install
-pnpm run dev                                             # :3000
+npm install
+npm run dev                                             # :3000
 ```
 
 ## Generate a Fernet key
