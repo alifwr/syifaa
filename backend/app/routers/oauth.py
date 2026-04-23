@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.deps import DbSession
@@ -47,6 +48,8 @@ async def fetch_userinfo(code: str) -> dict:
 
 @router.get("/login")
 async def login_start():
+    # TODO(csrf-state): before any public exposure we must generate and verify
+    # a state parameter to protect against the classic OAuth CSRF vector.
     s = get_settings()
     qs = urlencode(
         {
@@ -54,6 +57,8 @@ async def login_start():
             "redirect_uri": s.google_redirect_uri,
             "response_type": "code",
             "scope": "openid email profile",
+            # access_type=online (not offline) — we don't need a Google refresh
+            # token because we don't act on behalf of the user against Google APIs.
             "access_type": "online",
             "prompt": "select_account",
         }
@@ -63,7 +68,25 @@ async def login_start():
 
 @router.get("/callback", response_model=TokenPair)
 async def callback(code: str, db: DbSession) -> TokenPair:
-    info = await fetch_userinfo(code)
+    try:
+        info = await fetch_userinfo(code)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid authorization code",
+        ) from e
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=502,
+            detail="Upstream identity provider unreachable",
+        ) from e
+
+    if not info.get("email_verified", False):
+        raise HTTPException(
+            status_code=400,
+            detail="Google account email is not verified.",
+        )
+
     sub = info["sub"]
     email = info["email"]
 
@@ -100,7 +123,16 @@ async def callback(code: str, db: DbSession) -> TokenPair:
                 email=email,
             )
         )
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as e:
+            # TOCTOU race with another signup or OAuth callback for the same
+            # email / sub — surface as 409 rather than a 500.
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already in use; link Google from settings.",
+            ) from e
         user_id = user.id
 
     s = get_settings()

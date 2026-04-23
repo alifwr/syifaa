@@ -30,7 +30,7 @@ async def test_google_login_returns_authorization_url(client):
 async def test_google_callback_creates_user_and_issues_tokens(client, monkeypatch):
     async def fake(code: str):
         assert code == "FAKE-CODE"
-        return {"sub": "google-sub-1", "email": "g@b.com"}
+        return {"sub": "google-sub-1", "email": "g@b.com", "email_verified": True}
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
 
@@ -43,7 +43,7 @@ async def test_google_callback_creates_user_and_issues_tokens(client, monkeypatc
 
 async def test_google_callback_reuses_existing_oauth_link(client, monkeypatch):
     async def fake(code: str):
-        return {"sub": "google-sub-2", "email": "g2@b.com"}
+        return {"sub": "google-sub-2", "email": "g2@b.com", "email_verified": True}
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
     r1 = await client.get("/auth/google/callback", params={"code": "C1"})
@@ -53,10 +53,10 @@ async def test_google_callback_reuses_existing_oauth_link(client, monkeypatch):
 
 async def test_google_callback_rejects_sub_mismatch_same_email(client, monkeypatch):
     async def fake_a(code: str):
-        return {"sub": "sub-A", "email": "shared@b.com"}
+        return {"sub": "sub-A", "email": "shared@b.com", "email_verified": True}
 
     async def fake_b(code: str):
-        return {"sub": "sub-B", "email": "shared@b.com"}
+        return {"sub": "sub-B", "email": "shared@b.com", "email_verified": True}
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake_a)
     r1 = await client.get("/auth/google/callback", params={"code": "X"})
@@ -65,3 +65,37 @@ async def test_google_callback_rejects_sub_mismatch_same_email(client, monkeypat
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake_b)
     r2 = await client.get("/auth/google/callback", params={"code": "Y"})
     assert r2.status_code == 409
+
+
+async def test_google_callback_rejects_unverified_email(client, monkeypatch):
+    async def fake(code: str):
+        return {"sub": "sub-u", "email": "unv@b.com", "email_verified": False}
+
+    monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
+    r = await client.get("/auth/google/callback", params={"code": "X"})
+    assert r.status_code == 400
+
+
+async def test_google_callback_maps_http_status_error_to_400(client, monkeypatch):
+    import httpx
+
+    async def fake(code: str):
+        # Simulate a bad authorization code from Google.
+        req = httpx.Request("POST", "https://oauth2.googleapis.com/token")
+        resp = httpx.Response(400, request=req)
+        raise httpx.HTTPStatusError("bad code", request=req, response=resp)
+
+    monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
+    r = await client.get("/auth/google/callback", params={"code": "X"})
+    assert r.status_code == 400
+
+
+async def test_google_callback_maps_request_error_to_502(client, monkeypatch):
+    import httpx
+
+    async def fake(code: str):
+        raise httpx.ConnectError("no route to host")
+
+    monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
+    r = await client.get("/auth/google/callback", params={"code": "X"})
+    assert r.status_code == 502
