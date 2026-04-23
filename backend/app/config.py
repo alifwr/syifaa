@@ -1,3 +1,4 @@
+from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -12,5 +13,6 @@ class Settings(BaseSettings):
     google_redirect_uri: str = "http://localhost:3000/auth/google/callback"
     frontend_origin: str = "http://localhost:3000"
 
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()  # type: ignore[call-arg]
