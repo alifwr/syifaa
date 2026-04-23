@@ -107,3 +107,37 @@ async def test_test_connection_chat_failure_reports_error(client):
     body = r.json()
     assert body["chat"].startswith("error:")
     assert body["embed"] == "ok"
+
+
+async def test_delete_llm_config_success(client):
+    h = await _auth_header(client)
+    cid = (await client.post("/llm-config", json=_PAYLOAD, headers=h)).json()["id"]
+    r = await client.delete(f"/llm-config/{cid}", headers=h)
+    assert r.status_code == 204
+    r2 = await client.get("/llm-config", headers=h)
+    assert r2.json() == []
+
+
+async def test_delete_llm_config_not_found(client):
+    h = await _auth_header(client)
+    from uuid import uuid4
+    r = await client.delete(f"/llm-config/{uuid4()}", headers=h)
+    assert r.status_code == 404
+
+
+async def test_delete_llm_config_other_user_404(client):
+    # User A creates a config; User B must get 404 on delete attempt.
+    ha = await _auth_header(client)  # u@b.com from helper
+    cid = (await client.post("/llm-config", json=_PAYLOAD, headers=ha)).json()["id"]
+
+    await client.post("/auth/signup", json={"email": "other@b.com", "password": "pw_long_enough_xx"})
+    tok_b = (await client.post("/auth/login", json={
+        "email": "other@b.com", "password": "pw_long_enough_xx"
+    })).json()["access_token"]
+    hb = {"Authorization": f"Bearer {tok_b}"}
+
+    r = await client.delete(f"/llm-config/{cid}", headers=hb)
+    assert r.status_code == 404
+    # And the row is still there for user A.
+    r2 = await client.get("/llm-config", headers=ha)
+    assert len(r2.json()) == 1
