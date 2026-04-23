@@ -17,9 +17,22 @@ def get_engine() -> AsyncEngine:
 
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     get_engine()
-    assert _maker is not None
+    if _maker is None:
+        raise RuntimeError("sessionmaker not initialized")
     return _maker
+
+async def dispose_engine() -> None:
+    """Close the engine's pool. Call from FastAPI lifespan shutdown."""
+    global _engine, _maker
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _maker = None
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with get_sessionmaker()() as sess:
-        yield sess
+        try:
+            yield sess
+        except Exception:
+            await sess.rollback()
+            raise
