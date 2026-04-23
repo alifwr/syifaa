@@ -51,3 +51,40 @@ async def test_login_wrong_password_returns_401(client):
 async def test_login_unknown_email_returns_401(client):
     r = await client.post("/auth/login", json={"email": "nobody@b.com", "password": "doesnt_matter_xx"})
     assert r.status_code == 401
+
+
+async def test_me_requires_auth(client):
+    r = await client.get("/auth/me")
+    assert r.status_code == 401
+
+
+async def test_me_returns_current_user(client):
+    await client.post("/auth/signup", json={"email": "me@b.com", "password": "pw_long_enough_xx"})
+    tok = (await client.post("/auth/login", json={
+        "email": "me@b.com", "password": "pw_long_enough_xx"
+    })).json()["access_token"]
+    r = await client.get("/auth/me", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert r.json()["email"] == "me@b.com"
+
+
+async def test_me_rejects_refresh_token(client):
+    # Access endpoints must reject refresh-kind tokens.
+    await client.post("/auth/signup", json={"email": "rk@b.com", "password": "pw_long_enough_xx"})
+    pair = (await client.post("/auth/login", json={
+        "email": "rk@b.com", "password": "pw_long_enough_xx"
+    })).json()
+    r = await client.get("/auth/me", headers={"Authorization": f"Bearer {pair['refresh_token']}"})
+    assert r.status_code == 401
+
+
+async def test_me_rejects_tampered_token(client):
+    await client.post("/auth/signup", json={"email": "tt@b.com", "password": "pw_long_enough_xx"})
+    tok = (await client.post("/auth/login", json={
+        "email": "tt@b.com", "password": "pw_long_enough_xx"
+    })).json()["access_token"]
+    tampered = tok[:-2] + ("AB" if tok[-2:] != "AB" else "CD")
+    r = await client.get("/auth/me", headers={"Authorization": f"Bearer {tampered}"})
+    assert r.status_code == 401
+    # The detail must NOT leak PyJWT's internal message.
+    assert "signature" not in r.json().get("detail", "").lower()

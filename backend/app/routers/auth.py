@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
-from app.deps import DbSession
+from app.deps import DbSession, CurrentUser
 from app.models import User
 from app.schemas.auth import SignupIn, LoginIn, UserOut, TokenPair, RefreshIn
 from app.security import (
@@ -70,3 +70,8 @@ async def refresh(data: RefreshIn) -> TokenPair:
     if payload.get("kind") != "refresh":
         raise HTTPException(status_code=401, detail="Wrong token kind")
     return _issue_pair(str(payload["sub"]))
+
+
+@router.get("/me", response_model=UserOut)
+async def me(user: CurrentUser) -> UserOut:
+    return UserOut(id=user.id, email=user.email)
