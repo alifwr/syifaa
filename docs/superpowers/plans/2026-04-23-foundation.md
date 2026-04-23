@@ -2453,7 +2453,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ## Tests
 
 - Backend unit + integration: `cd backend && pytest`
-- Frontend e2e: `cd frontend && pnpm run test:e2e` (requires backend running)
+- Frontend e2e: `cd frontend && npm run test:e2e` (requires backend running)
 
 ## Plans
 
@@ -2478,7 +2478,7 @@ git commit -m "docs: add README with dev bootstrap"
 All of the following must hold before Plan 2 starts:
 
 - `cd backend && pytest -v` — all green.
-- `cd frontend && pnpm run test:e2e` — green, with backend running.
+- `cd frontend && npm run test:e2e` — green, with backend running.
 - Manual: signup, login, logout, Google OAuth callback (if credentials set), save LLM config, press Test — visible result line.
 - Database holds three tables (`user`, `oauth_account`, `llm_config`) with correct columns.
 - No plaintext API keys stored in DB — verify with: `docker compose exec db psql -U syifa -d syifa -c 'SELECT chat_api_key_enc FROM llm_config LIMIT 1;'` (Fernet ciphertext, starts with `gAAAA...`).
