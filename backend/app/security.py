@@ -44,3 +44,18 @@ def decode_jwt(token: str) -> dict[str, Any]:
         return jwt.decode(token, s.jwt_secret, algorithms=["HS256"])
     except jwt.PyJWTError as e:
         raise InvalidToken(str(e)) from e
+
+
+from cryptography.fernet import Fernet
+
+
+def _fernet() -> Fernet:
+    return Fernet(get_settings().fernet_key.encode())
+
+
+def encrypt_secret(plain: str) -> str:
+    return _fernet().encrypt(plain.encode()).decode()
+
+
+def decrypt_secret(token: str) -> str:
+    return _fernet().decrypt(token.encode()).decode()
