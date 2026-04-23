@@ -44,7 +44,10 @@ async def test_login_success_returns_tokens(client):
 
 async def test_login_wrong_password_returns_401(client):
     await client.post("/auth/signup", json={"email": "w@b.com", "password": "pw_long_enough_xx"})
-    r = await client.post("/auth/signup", json={"email": "w@b.com", "password": "wrong_password_xx"})
-    # ^^^ note: this is a no-op duplicate signup (would 409) — actual login below:
     r = await client.post("/auth/login", json={"email": "w@b.com", "password": "wrong_password_xx"})
+    assert r.status_code == 401
+
+
+async def test_login_unknown_email_returns_401(client):
+    r = await client.post("/auth/login", json={"email": "nobody@b.com", "password": "doesnt_matter_xx"})
     assert r.status_code == 401

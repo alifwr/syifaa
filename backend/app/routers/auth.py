@@ -17,6 +17,11 @@ from app.security import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Precomputed so that login always runs one bcrypt verify, preventing a timing
+# side channel that would otherwise distinguish "user not found" from
+# "wrong password".
+_DUMMY_PW_HASH = hash_password("dummy-password-for-timing-equalization-x")
+
 
 def _issue_pair(user_id: str) -> TokenPair:
     s = get_settings()
@@ -49,7 +54,9 @@ async def login(data: LoginIn, db: DbSession) -> TokenPair:
     row = (
         await db.execute(select(User).where(User.email == data.email))
     ).scalar_one_or_none()
-    if row is None or row.pw_hash is None or not verify_password(data.password, row.pw_hash):
+    target_hash = row.pw_hash if (row is not None and row.pw_hash is not None) else _DUMMY_PW_HASH
+    ok = verify_password(data.password, target_hash)
+    if row is None or row.pw_hash is None or not ok:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return _issue_pair(str(row.id))
 
@@ -62,4 +69,4 @@ async def refresh(data: RefreshIn) -> TokenPair:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     if payload.get("kind") != "refresh":
         raise HTTPException(status_code=401, detail="Wrong token kind")
-    return _issue_pair(payload["sub"])
+    return _issue_pair(str(payload["sub"]))
