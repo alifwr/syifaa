@@ -7,7 +7,8 @@
     "dev": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@pinia/nuxt": "^0.11.3",
@@ -17,5 +18,8 @@
     "tailwindcss": "^4.2.4",
     "vue": "^3.5.32",
     "vue-router": "^5.0.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }
