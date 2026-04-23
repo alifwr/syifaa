@@ -8,6 +8,9 @@ from testcontainers.postgres import PostgresContainer
 # here would hide bugs where something silently decrypts against a rotating key.
 os.environ.setdefault("JWT_SECRET", "test-secret-32-chars-minimum-xxxxxxx")
 os.environ.setdefault("FERNET_KEY", "placeholder-overridden-per-test")
+os.environ.setdefault("GOOGLE_CLIENT_ID", "test-client-id")
+os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-client-secret")
+os.environ.setdefault("GOOGLE_REDIRECT_URI", "http://localhost:3000/auth/google/callback")
 # DATABASE_URL placeholder satisfies Settings validation at import/collection time;
 # the pg_url fixture overwrites it (and clears the lru_cache) before any test runs.
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://x:x@localhost/x")

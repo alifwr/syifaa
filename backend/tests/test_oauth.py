@@ -1,0 +1,67 @@
+import pytest
+from httpx import AsyncClient, ASGITransport
+from app.main import create_app
+from app.models import Base
+from app.db import get_engine
+from app.routers import oauth as oauth_mod
+
+
+@pytest.fixture
+async def client(monkeypatch):
+    eng = get_engine()
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+
+async def test_google_login_returns_authorization_url(client):
+    r = await client.get("/auth/google/login")
+    assert r.status_code == 200
+    body = r.json()
+    assert "authorization_url" in body
+    url = body["authorization_url"]
+    assert "accounts.google.com" in url
+    assert "client_id=" in url
+
+
+async def test_google_callback_creates_user_and_issues_tokens(client, monkeypatch):
+    async def fake(code: str):
+        assert code == "FAKE-CODE"
+        return {"sub": "google-sub-1", "email": "g@b.com"}
+
+    monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
+
+    r = await client.get("/auth/google/callback", params={"code": "FAKE-CODE"})
+    assert r.status_code == 200
+    body = r.json()
+    assert "access_token" in body and "refresh_token" in body
+    assert body["token_type"] == "bearer"
+
+
+async def test_google_callback_reuses_existing_oauth_link(client, monkeypatch):
+    async def fake(code: str):
+        return {"sub": "google-sub-2", "email": "g2@b.com"}
+
+    monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
+    r1 = await client.get("/auth/google/callback", params={"code": "C1"})
+    r2 = await client.get("/auth/google/callback", params={"code": "C2"})
+    assert r1.status_code == 200 and r2.status_code == 200
+
+
+async def test_google_callback_rejects_sub_mismatch_same_email(client, monkeypatch):
+    async def fake_a(code: str):
+        return {"sub": "sub-A", "email": "shared@b.com"}
+
+    async def fake_b(code: str):
+        return {"sub": "sub-B", "email": "shared@b.com"}
+
+    monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake_a)
+    r1 = await client.get("/auth/google/callback", params={"code": "X"})
+    assert r1.status_code == 200
+
+    monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake_b)
+    r2 = await client.get("/auth/google/callback", params={"code": "Y"})
+    assert r2.status_code == 409
