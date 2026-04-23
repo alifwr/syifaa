@@ -863,6 +863,10 @@ class RefreshIn(BaseModel):
 
 - [ ] **Step 4: Write `backend/app/routers/auth.py`**
 
+> Note (2026-04-23): the original sample in this step had a timing side channel
+> that leaked account existence. The code below equalizes login time by always
+> running one bcrypt verify. See commit `36f8767`.
+
 ```python
 # backend/app/routers/auth.py
 from datetime import timedelta
@@ -895,10 +899,17 @@ async def signup(data: SignupIn, db: DbSession) -> UserOut:
     await db.refresh(user)
     return UserOut(id=user.id, email=user.email)
 
+# Precomputed so that login always runs one bcrypt verify, preventing a timing
+# side channel that would otherwise distinguish "user not found" from
+# "wrong password".
+_DUMMY_PW_HASH = hash_password("dummy-password-for-timing-equalization-x")
+
 @router.post("/login", response_model=TokenPair)
 async def login(data: LoginIn, db: DbSession) -> TokenPair:
     row = (await db.execute(select(User).where(User.email == data.email))).scalar_one_or_none()
-    if row is None or row.pw_hash is None or not verify_password(data.password, row.pw_hash):
+    target_hash = row.pw_hash if (row is not None and row.pw_hash is not None) else _DUMMY_PW_HASH
+    ok = verify_password(data.password, target_hash)
+    if row is None or row.pw_hash is None or not ok:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return _issue_pair(str(row.id))
 
