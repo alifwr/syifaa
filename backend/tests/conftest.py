@@ -27,3 +27,9 @@ def pg_url():
 def _require_pg(pg_url):
     # Every test gets DATABASE_URL pointing at the container.
     yield
+
+@pytest.fixture(autouse=True)
+async def _reset_engine_per_test():
+    yield
+    from app.db import dispose_engine
+    await dispose_engine()
