@@ -56,6 +56,7 @@ async def test_login_unknown_email_returns_401(client):
 async def test_me_requires_auth(client):
     r = await client.get("/auth/me")
     assert r.status_code == 401
+    assert r.json()["detail"] == "Invalid token"
 
 
 async def test_me_returns_current_user(client):
@@ -86,5 +87,16 @@ async def test_me_rejects_tampered_token(client):
     tampered = tok[:-2] + ("AB" if tok[-2:] != "AB" else "CD")
     r = await client.get("/auth/me", headers={"Authorization": f"Bearer {tampered}"})
     assert r.status_code == 401
-    # The detail must NOT leak PyJWT's internal message.
-    assert "signature" not in r.json().get("detail", "").lower()
+    assert r.json()["detail"] == "Invalid token"
+
+
+async def test_me_rejects_wrong_scheme(client):
+    r = await client.get("/auth/me", headers={"Authorization": "Basic abc"})
+    assert r.status_code == 401
+    assert r.json()["detail"] == "Invalid token"
+
+
+async def test_me_rejects_empty_token(client):
+    r = await client.get("/auth/me", headers={"Authorization": "Bearer   "})
+    assert r.status_code == 401
+    assert r.json()["detail"] == "Invalid token"
