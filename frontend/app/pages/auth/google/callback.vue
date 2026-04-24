@@ -14,9 +14,11 @@ const error = ref("")
 
 onMounted(async () => {
   const code = route.query.code as string | undefined
+  const state = route.query.state as string | undefined
   if (!code) { error.value = "Missing code"; return }
+  if (!state) { error.value = "Missing state"; return }
   try {
-    const r = await fetch(`${cfg.public.apiBase}/auth/google/callback?code=${encodeURIComponent(code)}`)
+    const r = await fetch(`${cfg.public.apiBase}/auth/google/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`)
     if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`)
     const pair = await r.json()
     auth.set(pair)

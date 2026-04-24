@@ -25,6 +25,21 @@ async def test_google_login_returns_authorization_url(client):
     url = body["authorization_url"]
     assert "accounts.google.com" in url
     assert "client_id=" in url
+    # state param must be present in the URL
+    assert "state=" in url
+    # oauth_state cookie must be set
+    assert "oauth_state" in r.cookies
+
+
+async def test_google_login_sets_state_cookie(client):
+    r = await client.get("/auth/google/login")
+    assert r.status_code == 200
+    # cookie present in Set-Cookie headers
+    raw_setcookie = r.headers.get_list("set-cookie")
+    assert any("oauth_state=" in sc.lower() for sc in raw_setcookie)
+    # state also in authorization_url
+    url = r.json()["authorization_url"]
+    assert "state=" in url
 
 
 async def test_google_callback_creates_user_and_issues_tokens(client, monkeypatch):
@@ -34,7 +49,11 @@ async def test_google_callback_creates_user_and_issues_tokens(client, monkeypatc
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
 
-    r = await client.get("/auth/google/callback", params={"code": "FAKE-CODE"})
+    client.cookies.set("oauth_state", "fake-state")
+    r = await client.get(
+        "/auth/google/callback",
+        params={"code": "FAKE-CODE", "state": "fake-state"},
+    )
     assert r.status_code == 200
     body = r.json()
     assert "access_token" in body and "refresh_token" in body
@@ -46,8 +65,9 @@ async def test_google_callback_reuses_existing_oauth_link(client, monkeypatch):
         return {"sub": "google-sub-2", "email": "g2@b.com", "email_verified": True}
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
-    r1 = await client.get("/auth/google/callback", params={"code": "C1"})
-    r2 = await client.get("/auth/google/callback", params={"code": "C2"})
+    client.cookies.set("oauth_state", "fake-state")
+    r1 = await client.get("/auth/google/callback", params={"code": "C1", "state": "fake-state"})
+    r2 = await client.get("/auth/google/callback", params={"code": "C2", "state": "fake-state"})
     assert r1.status_code == 200 and r2.status_code == 200
 
 
@@ -59,11 +79,13 @@ async def test_google_callback_rejects_sub_mismatch_same_email(client, monkeypat
         return {"sub": "sub-B", "email": "shared@b.com", "email_verified": True}
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake_a)
-    r1 = await client.get("/auth/google/callback", params={"code": "X"})
+    client.cookies.set("oauth_state", "fake-state")
+    r1 = await client.get("/auth/google/callback", params={"code": "X", "state": "fake-state"})
     assert r1.status_code == 200
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake_b)
-    r2 = await client.get("/auth/google/callback", params={"code": "Y"})
+    client.cookies.set("oauth_state", "fake-state")
+    r2 = await client.get("/auth/google/callback", params={"code": "Y", "state": "fake-state"})
     assert r2.status_code == 409
 
 
@@ -72,7 +94,8 @@ async def test_google_callback_rejects_unverified_email(client, monkeypatch):
         return {"sub": "sub-u", "email": "unv@b.com", "email_verified": False}
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
-    r = await client.get("/auth/google/callback", params={"code": "X"})
+    client.cookies.set("oauth_state", "fake-state")
+    r = await client.get("/auth/google/callback", params={"code": "X", "state": "fake-state"})
     assert r.status_code == 400
 
 
@@ -86,7 +109,8 @@ async def test_google_callback_maps_http_status_error_to_400(client, monkeypatch
         raise httpx.HTTPStatusError("bad code", request=req, response=resp)
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
-    r = await client.get("/auth/google/callback", params={"code": "X"})
+    client.cookies.set("oauth_state", "fake-state")
+    r = await client.get("/auth/google/callback", params={"code": "X", "state": "fake-state"})
     assert r.status_code == 400
 
 
@@ -97,5 +121,20 @@ async def test_google_callback_maps_request_error_to_502(client, monkeypatch):
         raise httpx.ConnectError("no route to host")
 
     monkeypatch.setattr(oauth_mod, "fetch_userinfo", fake)
-    r = await client.get("/auth/google/callback", params={"code": "X"})
+    client.cookies.set("oauth_state", "fake-state")
+    r = await client.get("/auth/google/callback", params={"code": "X", "state": "fake-state"})
     assert r.status_code == 502
+
+
+async def test_callback_without_state_cookie_rejected(client):
+    r = await client.get("/auth/google/callback", params={"code": "x", "state": "y"})
+    assert r.status_code == 400
+
+
+async def test_callback_with_mismatched_state_rejected(client):
+    client.cookies.set("oauth_state", "server-state")
+    r = await client.get(
+        "/auth/google/callback",
+        params={"code": "x", "state": "attacker-state"},
+    )
+    assert r.status_code == 400

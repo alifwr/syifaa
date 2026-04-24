@@ -1,8 +1,9 @@
+import secrets
 from datetime import timedelta
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Cookie, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -18,6 +19,9 @@ router = APIRouter(prefix="/auth/google", tags=["oauth"])
 GOOGLE_AUTHZ = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
+
+STATE_COOKIE = "oauth_state"
+STATE_TTL = 600  # 10 minutes
 
 
 async def fetch_userinfo(code: str) -> dict:
@@ -47,10 +51,9 @@ async def fetch_userinfo(code: str) -> dict:
 
 
 @router.get("/login")
-async def login_start():
-    # TODO(csrf-state): before any public exposure we must generate and verify
-    # a state parameter to protect against the classic OAuth CSRF vector.
+async def login_start(response: Response):
     s = get_settings()
+    state = secrets.token_urlsafe(32)
     qs = urlencode(
         {
             "client_id": s.google_client_id,
@@ -61,13 +64,31 @@ async def login_start():
             # token because we don't act on behalf of the user against Google APIs.
             "access_type": "online",
             "prompt": "select_account",
+            "state": state,
         }
+    )
+    response.set_cookie(
+        STATE_COOKIE,
+        state,
+        max_age=STATE_TTL,
+        httponly=True,
+        samesite="lax",
+        secure=False,
     )
     return {"authorization_url": f"{GOOGLE_AUTHZ}?{qs}"}
 
 
 @router.get("/callback", response_model=TokenPair)
-async def callback(code: str, db: DbSession) -> TokenPair:
+async def callback(
+    code: str,
+    state: str,
+    db: DbSession,
+    response: Response,
+    oauth_state: str | None = Cookie(default=None, alias=STATE_COOKIE),
+) -> TokenPair:
+    if not oauth_state or not secrets.compare_digest(oauth_state, state):
+        raise HTTPException(status_code=400, detail="Invalid state")
+
     try:
         info = await fetch_userinfo(code)
     except httpx.HTTPStatusError as e:
@@ -144,4 +165,5 @@ async def callback(code: str, db: DbSession) -> TokenPair:
         {"sub": str(user_id), "kind": "refresh"},
         timedelta(days=s.jwt_refresh_ttl_days),
     )
+    response.delete_cookie(STATE_COOKIE)
     return TokenPair(access_token=access, refresh_token=refresh)
