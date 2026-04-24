@@ -36,3 +36,42 @@ async def _reset_engine_per_test():
     yield
     from app.db import dispose_engine
     await dispose_engine()
+
+
+from testcontainers.localstack import LocalStackContainer
+
+
+@pytest.fixture(scope="session")
+def localstack():
+    with LocalStackContainer(image="localstack/localstack:3") as ls:
+        ls.with_services("s3")
+        url = ls.get_url()
+        os.environ["S3_ENDPOINT_URL"] = url
+        os.environ["S3_REGION"] = "us-east-1"
+        os.environ["S3_ACCESS_KEY"] = "test"
+        os.environ["S3_SECRET_KEY"] = "test"
+        from app.config import get_settings
+        get_settings.cache_clear()
+        yield url
+
+
+@pytest.fixture
+def s3_bucket(localstack):
+    import boto3
+    s = __import__("app.config", fromlist=["get_settings"]).get_settings()
+    client = boto3.client(
+        "s3",
+        endpoint_url=s.s3_endpoint_url,
+        region_name=s.s3_region,
+        aws_access_key_id=s.s3_access_key,
+        aws_secret_access_key=s.s3_secret_key,
+    )
+    try:
+        client.create_bucket(Bucket=s.s3_bucket)
+    except client.exceptions.BucketAlreadyOwnedByYou:
+        pass
+    yield s.s3_bucket
+    # cleanup: empty bucket between tests so keys don't leak across cases
+    objs = client.list_objects_v2(Bucket=s.s3_bucket).get("Contents", [])
+    for o in objs:
+        client.delete_object(Bucket=s.s3_bucket, Key=o["Key"])

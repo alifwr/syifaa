@@ -27,6 +27,7 @@ dependencies = [
   "pymupdf>=1.24",
   "python-multipart>=0.0.9",
   "email-validator>=2",
+  "boto3>=1.35",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +38,7 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.11",
   "testcontainers[postgres]>=4.8",
+  "testcontainers[localstack]>=4.8",
 ]
 
 [tool.pytest.ini_options]
