@@ -75,7 +75,7 @@ async def ingest_paper(
         resp = await gateway.chat(msg)
         content = resp.choices[0].message.content
         data = json.loads(content)
-        concept_records = data.get("concepts", [])[:12]
+        concept_records = (data.get("concepts") or [])[:12]
         if not concept_records:
             log.warning("no concepts extracted for paper %s", paper.id)
         else:
@@ -107,31 +107,39 @@ async def ingest_paper(
         await db.commit()
     except Exception as e:
         log.exception("ingest failed for paper %s", paper_id)
-        await db.rollback()
-        # Re-fetch paper and write failure in a fresh transaction.
-        paper = (
-            await db.execute(select(Paper).where(Paper.id == paper_id))
-        ).scalar_one()
-        paper.status = PaperStatus.failed
-        paper.parse_error = str(e)[:2000]
-        await db.commit()
+        try:
+            await db.rollback()
+            paper = (
+                await db.execute(select(Paper).where(Paper.id == paper_id))
+            ).scalar_one()
+            paper.status = PaperStatus.failed
+            paper.parse_error = str(e)[:2000]
+            await db.commit()
+        except Exception:
+            log.exception("could not persist failure state for paper %s", paper_id)
 
 
 async def _propose_edges(db, ConceptM, new_concepts, *, user_id, top_k, min_cos):
     if len(new_concepts) < 2:
         return
+    # In-memory dedup so we don't rely on session autoflush picking up adds
+    # made earlier in this call. Also skips a SELECT per candidate pair.
+    added: set[frozenset] = set()
     for new in new_concepts:
+        dist_col = ConceptM.embedding.cosine_distance(new.embedding).label("d")
         result = await db.execute(
-            select(ConceptM, ConceptM.embedding.cosine_distance(new.embedding).label("d"))
+            select(ConceptM, dist_col)
             .where(ConceptM.user_id == user_id, ConceptM.id != new.id)
-            .order_by("d")
+            .order_by(dist_col)
             .limit(top_k)
         )
         for other, dist in result.all():
             cos = 1.0 - float(dist)
             if cos < min_cos:
                 continue
-            # Avoid duplicate edges (a,b) and (b,a) for the same pair.
+            pair = frozenset({new.id, other.id})
+            if pair in added:
+                continue
             exists = (
                 await db.execute(
                     select(ConceptEdge).where(
@@ -149,3 +157,4 @@ async def _propose_edges(db, ConceptM, new_concepts, *, user_id, top_k, min_cos)
                     relation="related-to", confidence=cos,
                 )
             )
+            added.add(pair)
