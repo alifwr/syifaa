@@ -1,5 +1,6 @@
 import os
 import pytest
+from cryptography.fernet import Fernet
 from testcontainers.postgres import PostgresContainer
 
 # NOTE: The placeholder FERNET_KEY below is intentionally NOT a valid Fernet
@@ -86,3 +87,25 @@ def s3_bucket(localstack):
     objs = client.list_objects_v2(Bucket=s.s3_bucket).get("Contents", [])
     for o in objs:
         client.delete_object(Bucket=s.s3_bucket, Key=o["Key"])
+
+
+@pytest.fixture
+def fernet_key(monkeypatch):
+    key = Fernet.generate_key().decode()
+    monkeypatch.setenv("FERNET_KEY", key)
+    from app.config import get_settings
+    get_settings.cache_clear()
+    yield key
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+async def fresh_schema():
+    """Drop and recreate all tables so each test starts with a clean schema."""
+    from app.db import get_engine
+    from app.models import Base
+    eng = get_engine()
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield

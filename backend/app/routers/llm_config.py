@@ -6,8 +6,9 @@ from sqlalchemy import select, update
 from app.deps import DbSession, CurrentUser
 from app.models import LLMConfig
 from app.schemas.llm_config import LLMConfigIn, LLMConfigOut, TestConnectionOut
-from app.security import encrypt_secret, decrypt_secret
-from app.services.llm_gateway import LLMGateway, LLMConnectionError
+from app.security import encrypt_secret
+from app.services.llm_gateway import LLMConnectionError
+from app.services.user_llm import build_gateway_from_config
 
 
 router = APIRouter(prefix="/llm-config", tags=["llm-config"])
@@ -109,15 +110,7 @@ async def test_connection(
     if cfg is None:
         raise HTTPException(status_code=404, detail="Config not found")
 
-    gw = LLMGateway(
-        chat_base_url=cfg.chat_base_url,
-        chat_api_key=decrypt_secret(cfg.chat_api_key_enc),
-        chat_model=cfg.chat_model,
-        embed_base_url=cfg.embed_base_url,
-        embed_api_key=decrypt_secret(cfg.embed_api_key_enc),
-        embed_model=cfg.embed_model,
-        embed_dim=cfg.embed_dim,
-    )
+    gw = build_gateway_from_config(cfg)
 
     async def _safe(coro) -> str:
         try:

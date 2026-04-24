@@ -84,8 +84,8 @@ async def test_activate_llm_config(client):
 async def test_test_connection_success(client):
     h = await _auth_header(client)
     cid = (await client.post("/llm-config", json=_PAYLOAD, headers=h)).json()["id"]
-    with patch("app.routers.llm_config.LLMGateway") as GW:
-        inst = GW.return_value
+    with patch("app.routers.llm_config.build_gateway_from_config") as mk_gw:
+        inst = mk_gw.return_value
         inst.ping_chat = AsyncMock(return_value=True)
         inst.ping_embed = AsyncMock(return_value=True)
         r = await client.post(f"/llm-config/{cid}/test", headers=h)
@@ -96,8 +96,8 @@ async def test_test_connection_success(client):
 async def test_test_connection_chat_failure_reports_error(client):
     h = await _auth_header(client)
     cid = (await client.post("/llm-config", json=_PAYLOAD, headers=h)).json()["id"]
-    with patch("app.routers.llm_config.LLMGateway") as GW:
-        inst = GW.return_value
+    with patch("app.routers.llm_config.build_gateway_from_config") as mk_gw:
+        inst = mk_gw.return_value
         from app.services.llm_gateway import LLMConnectionError
 
         inst.ping_chat = AsyncMock(side_effect=LLMConnectionError("401 unauthorized"))
