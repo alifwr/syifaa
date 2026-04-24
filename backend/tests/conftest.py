@@ -43,8 +43,10 @@ from testcontainers.localstack import LocalStackContainer
 
 @pytest.fixture(scope="session")
 def localstack():
-    with LocalStackContainer(image="localstack/localstack:3") as ls:
-        ls.with_services("s3")
+    # .with_services must be called BEFORE __enter__ (container start) or the
+    # SERVICES env var is already baked in and the call is a silent no-op.
+    container = LocalStackContainer(image="localstack/localstack:3").with_services("s3")
+    with container as ls:
         url = ls.get_url()
         os.environ["S3_ENDPOINT_URL"] = url
         os.environ["S3_REGION"] = "us-east-1"
