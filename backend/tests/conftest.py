@@ -24,6 +24,15 @@ def pg_url():
         # Invalidate any cached Settings snapshot so tests see the container URL.
         from app.config import get_settings
         get_settings.cache_clear()
+        # Register a DDL event so every Base.metadata.create_all call first
+        # ensures the pgvector extension exists, even after a DROP SCHEMA reset.
+        from sqlalchemy import event, text
+        from app.models.base import Base
+
+        @event.listens_for(Base.metadata, "before_create")
+        def _create_vector_extension(target, connection, **kw):
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
         yield url
 
 @pytest.fixture(autouse=True)
