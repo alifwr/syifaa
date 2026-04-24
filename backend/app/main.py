@@ -6,6 +6,7 @@ from app.routers import auth as auth_router
 from app.routers import oauth as oauth_router
 from app.routers import llm_config as llm_config_router
 from app.routers import papers as papers_router
+from app.routers import concepts as concepts_router
 
 
 def create_app() -> FastAPI:
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
     app.include_router(oauth_router.router)
     app.include_router(llm_config_router.router)
     app.include_router(papers_router.router)
+    app.include_router(concepts_router.router)
     return app
 
 
