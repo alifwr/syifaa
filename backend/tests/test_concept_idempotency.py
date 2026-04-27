@@ -87,7 +87,7 @@ async def test_concept_match_is_case_insensitive(
                 '{"concepts":[{"name":"attention","summary":"s"}]}',
             ]
             return types.SimpleNamespace(choices=[types.SimpleNamespace(
-                message=types.SimpleNamespace(content=payloads[calls["n"] % len(payloads) - 1]))])
+                message=types.SimpleNamespace(content=payloads[(calls["n"] - 1) % len(payloads)]))])
     async def fake(db, u): return GW()
     monkeypatch.setattr("app.routers.papers.build_user_gateway", fake)
 
