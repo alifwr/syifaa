@@ -3,6 +3,7 @@
     <header class="border-b border-neutral-200 dark:border-neutral-800 px-6 py-3 flex justify-between">
       <NuxtLink to="/" class="font-semibold">syifa</NuxtLink>
       <nav class="flex gap-4 text-sm">
+        <NuxtLink v-if="auth.isLoggedIn" to="/papers">Papers</NuxtLink>
         <NuxtLink to="/settings/llm">LLM</NuxtLink>
         <NuxtLink v-if="!auth.isLoggedIn" to="/login">Login</NuxtLink>
         <button v-else @click="auth.logout()" class="text-neutral-500 hover:underline">Logout</button>

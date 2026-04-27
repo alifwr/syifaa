@@ -23,7 +23,25 @@ export const useApi = () => {
     return handle<T>(resp)
   }
 
-  return { call }
+  const callUpload = async <T>(path: string, body: FormData): Promise<T> => {
+    const headers = new Headers()
+    if (auth.access) headers.set("Authorization", `Bearer ${auth.access}`)
+
+    const resp = await fetch(`${config.public.apiBase}${path}`, { method: "POST", body, headers })
+
+    if (resp.status === 401 && auth.refresh) {
+      const refreshed = await auth.tryRefresh()
+      if (refreshed) {
+        headers.set("Authorization", `Bearer ${auth.access}`)
+        const retry = await fetch(`${config.public.apiBase}${path}`, { method: "POST", body, headers })
+        return handle<T>(retry)
+      }
+      auth.clear()
+    }
+    return handle<T>(resp)
+  }
+
+  return { call, callUpload }
 }
 
 async function handle<T>(resp: Response): Promise<T> {
