@@ -184,3 +184,56 @@ async def test_message_session_not_owned_returns_404(
         h2 = await _signup(c)
         r = await c.post(f"/feynman/{sid}/message", json={"content":"x"}, headers=h2)
         assert r.status_code == 404
+
+
+async def test_end_session_grades_and_sets_score(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        await _seed_with_paper(c, h, monkeypatch)
+
+        class GW:
+            async def chat(self, messages, stream=False):
+                if stream:
+                    raise AssertionError("end should not stream")
+                return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"score": 0.62}'))])
+
+        async def fake(db, u): return GW()
+        monkeypatch.setattr("app.routers.feynman.build_user_gateway", fake)
+
+        sid = (await c.post("/feynman/start", json={"kind":"fresh"}, headers=h)).json()["id"]
+        r = await c.post(f"/feynman/{sid}/end", headers=h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert abs(body["quality_score"] - 0.62) < 1e-9
+
+        detail = (await c.get(f"/feynman/{sid}", headers=h)).json()
+        assert detail["ended_at"] is not None
+        assert detail["quality_score"] is not None
+
+
+async def test_end_session_idempotent_returns_existing(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        await _seed_with_paper(c, h, monkeypatch)
+
+        class GW:
+            async def chat(self, messages, stream=False):
+                return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"score": 0.4}'))])
+
+        async def fake(db, u): return GW()
+        monkeypatch.setattr("app.routers.feynman.build_user_gateway", fake)
+
+        sid = (await c.post("/feynman/start", json={"kind":"fresh"}, headers=h)).json()["id"]
+        r1 = await c.post(f"/feynman/{sid}/end", headers=h)
+        s1 = r1.json()["quality_score"]
+        r2 = await c.post(f"/feynman/{sid}/end", headers=h)
+        assert r2.status_code == 200
+        assert r2.json()["quality_score"] == s1

@@ -13,9 +13,9 @@ from app.models import (
     FeynmanSession, FeynmanKind, LLMConfig, Paper, concept_model_for,
 )
 from app.schemas.feynman import (
-    FeynmanStartIn, FeynmanSessionOut, FeynmanMessageIn,
+    FeynmanStartIn, FeynmanSessionOut, FeynmanMessageIn, FeynmanGradeOut,
 )
-from app.services.feynman import build_system_prompt
+from app.services.feynman import build_system_prompt, grade_transcript
 from app.services.sse import sse_event, stream_chat
 from app.services.user_llm import build_user_gateway
 
@@ -175,3 +175,28 @@ async def message(
             yield sse_event("[DONE]")
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.post("/{sid}/end", response_model=FeynmanGradeOut)
+async def end(sid: UUID, user: CurrentUser, db: DbSession) -> FeynmanGradeOut:
+    s = (
+        await db.execute(
+            select(FeynmanSession).where(
+                FeynmanSession.id == sid, FeynmanSession.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if s.ended_at is not None and s.quality_score is not None:
+        return FeynmanGradeOut(quality_score=float(s.quality_score))
+
+    gw = await build_user_gateway(db, user)
+    msgs = [t for t in (s.transcript or []) if t.get("role") in ("user", "assistant")]
+    score = await grade_transcript(gw, msgs)
+
+    s.ended_at = datetime.now(timezone.utc)
+    s.quality_score = score
+    await db.commit()
+    return FeynmanGradeOut(quality_score=score)
