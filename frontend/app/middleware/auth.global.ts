@@ -1,6 +1,6 @@
 import { useAuthStore } from "~/stores/auth"
 
-const PROTECTED = [/^\/settings/, /^\/papers/, /^\/review/, /^\/dashboard/]
+const PROTECTED = [/^\/settings/, /^\/papers/, /^\/review/, /^\/dashboard/, /^\/feynman/]
 
 export default defineNuxtRouteMiddleware(async (to) => {
   const auth = useAuthStore()

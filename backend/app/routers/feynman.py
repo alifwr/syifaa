@@ -28,12 +28,15 @@ def _now_iso() -> str:
 
 
 def _to_out(s: FeynmanSession) -> FeynmanSessionOut:
+    # Strip system turns: the curious-student prompt is server-side state,
+    # not user-visible. Frontend already filters; defending here too.
+    visible = [t for t in (s.transcript or []) if t.get("role") != "system"]
     return FeynmanSessionOut(
         id=s.id, user_id=s.user_id, paper_id=s.paper_id,
         target_concept_id=s.target_concept_id, kind=s.kind.value,
         started_at=s.started_at, ended_at=s.ended_at,
         quality_score=float(s.quality_score) if s.quality_score is not None else None,
-        transcript=s.transcript or [],
+        transcript=visible,
     )
 
 
@@ -174,7 +177,16 @@ async def message(
                 await db.commit()
             yield sse_event("[DONE]")
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Tell nginx (and friends) not to buffer the stream.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/{sid}/end", response_model=FeynmanGradeOut)

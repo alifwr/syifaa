@@ -61,7 +61,8 @@ async def test_start_session_picks_concept_and_seeds_transcript(
         assert body["target_concept_id"] == concept["id"]
         assert body["kind"] == "fresh"
         assert body["paper_id"] == pid
-        assert any(t["role"] == "system" for t in body["transcript"])
+        # System turn is server-side only; not exposed via API.
+        assert all(t["role"] != "system" for t in body["transcript"])
 
 
 async def test_start_session_without_paper_picks_any_concept(
