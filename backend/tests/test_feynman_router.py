@@ -111,3 +111,76 @@ async def test_get_session_only_visible_to_owner(
         assert r.status_code == 404
         r = await c.get(f"/feynman/{sid}", headers=h1)
         assert r.status_code == 200
+
+
+async def test_message_streams_and_persists(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        await _seed_with_paper(c, h, monkeypatch)
+
+        class FakeStream:
+            def __init__(self, deltas): self._d = deltas
+            def __aiter__(self): return self._iter()
+            async def _iter(self):
+                for d in self._d:
+                    yield type("Chunk", (), {
+                        "choices": [type("C", (), {
+                            "delta": type("D", (), {"content": d}),
+                            "finish_reason": None,
+                        })],
+                    })
+                yield type("Chunk", (), {
+                    "choices": [type("C", (), {
+                        "delta": type("D", (), {"content": None}),
+                        "finish_reason": "stop",
+                    })],
+                })
+
+        class GW:
+            async def chat(self, messages, stream=False):
+                if stream:
+                    return FakeStream(["Why ", "self-attention", "?"])
+                return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"score":0.5}'))])
+
+        async def fake(db, u): return GW()
+        monkeypatch.setattr("app.routers.feynman.build_user_gateway", fake)
+
+        sid = (await c.post("/feynman/start", json={"kind":"fresh"}, headers=h)).json()["id"]
+
+        async with c.stream(
+            "POST",
+            f"/feynman/{sid}/message",
+            headers=h,
+            json={"content": "Self-attention is when..."},
+        ) as r:
+            assert r.status_code == 200
+            collected: list[str] = []
+            async for line in r.aiter_lines():
+                if line.startswith("data: "):
+                    collected.append(line[6:])
+        full_reply = "".join(c for c in collected if c and c != "[DONE]")
+        assert "Why" in full_reply
+
+        body = (await c.get(f"/feynman/{sid}", headers=h)).json()
+        roles = [t["role"] for t in body["transcript"]]
+        assert "user" in roles
+        assert "assistant" in roles
+        last = body["transcript"][-1]
+        assert last["role"] == "assistant" and "Why" in last["content"]
+
+
+async def test_message_session_not_owned_returns_404(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h1 = await _signup(c)
+        await _seed_with_paper(c, h1, monkeypatch)
+        sid = (await c.post("/feynman/start", json={"kind":"fresh"}, headers=h1)).json()["id"]
+        h2 = await _signup(c)
+        r = await c.post(f"/feynman/{sid}/message", json={"content":"x"}, headers=h2)
+        assert r.status_code == 404

@@ -1,21 +1,30 @@
 import logging
 from datetime import datetime, timezone
+from typing import AsyncIterator
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.deps import CurrentUser, DbSession
 from app.models import (
     FeynmanSession, FeynmanKind, LLMConfig, Paper, concept_model_for,
 )
 from app.schemas.feynman import (
-    FeynmanStartIn, FeynmanSessionOut,
+    FeynmanStartIn, FeynmanSessionOut, FeynmanMessageIn,
 )
 from app.services.feynman import build_system_prompt
+from app.services.sse import sse_event, stream_chat
+from app.services.user_llm import build_user_gateway
 
 log = logging.getLogger("syifa.feynman")
 router = APIRouter(prefix="/feynman", tags=["feynman"])
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _to_out(s: FeynmanSession) -> FeynmanSessionOut:
@@ -108,3 +117,61 @@ async def get_one(sid: UUID, user: CurrentUser, db: DbSession) -> FeynmanSession
     if s is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return _to_out(s)
+
+
+@router.post("/{sid}/message")
+async def message(
+    sid: UUID,
+    data: FeynmanMessageIn,
+    user: CurrentUser,
+    db: DbSession,
+):
+    s = (
+        await db.execute(
+            select(FeynmanSession).where(
+                FeynmanSession.id == sid, FeynmanSession.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if s.ended_at is not None:
+        raise HTTPException(status_code=400, detail="Session already ended")
+
+    gw = await build_user_gateway(db, user)
+
+    user_turn = {"role": "user", "content": data.content, "ts": _now_iso()}
+    s.transcript = list(s.transcript or []) + [user_turn]
+    flag_modified(s, "transcript")
+    await db.commit()
+
+    llm_msgs = [{"role": t["role"], "content": t["content"]} for t in s.transcript]
+
+    async def gen() -> AsyncIterator[bytes]:
+        full: list[str] = []
+        try:
+            async for delta, finish in stream_chat(gw, llm_msgs):
+                if delta:
+                    full.append(delta)
+                    yield sse_event(delta)
+                if finish:
+                    break
+        except Exception as e:
+            log.exception("stream failed for session %s", sid)
+            yield sse_event({"error": str(e)})
+        finally:
+            assistant = "".join(full).strip()
+            if assistant:
+                fresh = (
+                    await db.execute(
+                        select(FeynmanSession).where(FeynmanSession.id == sid)
+                    )
+                ).scalar_one()
+                fresh.transcript = list(fresh.transcript or []) + [{
+                    "role": "assistant", "content": assistant, "ts": _now_iso(),
+                }]
+                flag_modified(fresh, "transcript")
+                await db.commit()
+            yield sse_event("[DONE]")
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
