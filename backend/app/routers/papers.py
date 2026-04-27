@@ -5,10 +5,12 @@ from fastapi import (
     APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status,
 )
 from sqlalchemy import select
+from sqlalchemy import delete as sa_delete
 
 from app.deps import CurrentUser, DbSession
 from app.db import get_sessionmaker
 from app.models import Paper, PaperStatus, LLMConfig
+from app.models import Concept768, Concept1024, Concept1536, ConceptEdge
 from app.schemas.paper import PaperOut
 from app.services.storage import Storage
 from app.services.user_llm import build_user_gateway, NoActiveLLMConfig
@@ -130,6 +132,30 @@ async def reingest(
     return _to_out(p)
 
 
+async def _prune_concepts_for_paper(db, user_id, pid) -> None:
+    for ConceptM in (Concept768, Concept1024, Concept1536):
+        rows = (
+            await db.execute(
+                select(ConceptM).where(ConceptM.user_id == user_id)
+            )
+        ).scalars().all()
+        for r in rows:
+            srcs = list(r.source_paper_ids or [])
+            if pid not in srcs:
+                continue
+            srcs = [s for s in srcs if s != pid]
+            if srcs:
+                r.source_paper_ids = srcs
+                continue
+            await db.execute(
+                sa_delete(ConceptEdge).where(
+                    ConceptEdge.user_id == user_id,
+                    (ConceptEdge.src_id == r.id) | (ConceptEdge.dst_id == r.id),
+                )
+            )
+            await db.delete(r)
+
+
 @router.delete("/{pid}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete(pid: UUID, user: CurrentUser, db: DbSession) -> None:
     p = (
@@ -143,5 +169,6 @@ async def delete(pid: UUID, user: CurrentUser, db: DbSession) -> None:
         await Storage().delete_object(p.s3_key)
     except Exception:
         log.warning("blob %s not deleted; continuing", p.s3_key)
+    await _prune_concepts_for_paper(db, user.id, p.id)
     await db.delete(p)
     await db.commit()
