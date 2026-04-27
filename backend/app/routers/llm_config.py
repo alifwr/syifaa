@@ -1,14 +1,48 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.deps import DbSession, CurrentUser
-from app.models import LLMConfig
+from app.models import (
+    LLMConfig,
+    PaperChunk768, PaperChunk1024, PaperChunk1536,
+    Concept768, Concept1024, Concept1536, Paper,
+)
 from app.schemas.llm_config import LLMConfigIn, LLMConfigOut, TestConnectionOut
 from app.security import encrypt_secret
 from app.services.llm_gateway import LLMConnectionError
 from app.services.user_llm import build_gateway_from_config
+
+
+_DIM_TABLES = {
+    768: (PaperChunk768, Concept768),
+    1024: (PaperChunk1024, Concept1024),
+    1536: (PaperChunk1536, Concept1536),
+}
+
+
+async def _user_has_data_in_other_dim(db, user_id, target_dim: int) -> bool:
+    for d, (CM, KM) in _DIM_TABLES.items():
+        if d == target_dim:
+            continue
+        n_concepts = (
+            await db.execute(
+                select(func.count()).select_from(KM).where(KM.user_id == user_id)
+            )
+        ).scalar()
+        if n_concepts:
+            return True
+        n_chunks = (
+            await db.execute(
+                select(func.count()).select_from(CM)
+                .join(Paper, Paper.id == CM.paper_id)
+                .where(Paper.user_id == user_id)
+            )
+        ).scalar()
+        if n_chunks:
+            return True
+    return False
 
 
 router = APIRouter(prefix="/llm-config", tags=["llm-config"])
@@ -70,6 +104,14 @@ async def activate(cid: UUID, user: CurrentUser, db: DbSession) -> LLMConfigOut:
     ).scalar_one_or_none()
     if target is None:
         raise HTTPException(status_code=404, detail="Config not found")
+    if await _user_has_data_in_other_dim(db, user.id, target.embed_dim):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot switch embed_dim: existing chunks/concepts use a "
+                "different dim. Delete existing papers first."
+            ),
+        )
     await db.execute(
         update(LLMConfig)
         .where(LLMConfig.user_id == user.id)
