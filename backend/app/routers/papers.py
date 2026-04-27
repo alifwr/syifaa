@@ -7,6 +7,7 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy import delete as sa_delete
 
+from app.config import get_settings
 from app.deps import CurrentUser, DbSession
 from app.db import get_sessionmaker
 from app.models import Paper, PaperStatus, LLMConfig
@@ -66,9 +67,20 @@ async def upload(
     if cfg is None:
         raise HTTPException(status_code=400, detail="No active LLM config; set one in settings")
 
+    settings = get_settings()
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > settings.paper_max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large; max {settings.paper_max_bytes} bytes",
+        )
+    if not data.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=415,
+            detail="File does not look like a PDF (missing %PDF- header)",
+        )
 
     key = f"papers/{user.id}/{uuid4()}.pdf"
     await Storage().put_object(key, data, content_type="application/pdf")
