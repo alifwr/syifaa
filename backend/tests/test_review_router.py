@@ -125,3 +125,75 @@ async def test_review_due_without_active_config_returns_400(
         h = await _signup(c)
         r = await c.get("/review/due", headers=h)
         assert r.status_code == 400
+
+
+async def test_review_start_creates_scheduled_session(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        pid, _ = await _seed_with_paper(c, h, monkeypatch)
+
+        class GW:
+            async def chat(self, messages, stream=False):
+                return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"score":0.85}'))])
+        async def fake(db, u): return GW()
+        monkeypatch.setattr("app.routers.feynman.build_user_gateway", fake)
+
+        sid = (await c.post("/feynman/start", json={"paper_id":pid,"kind":"fresh"}, headers=h)).json()["id"]
+        await c.post(f"/feynman/{sid}/end", headers=h)
+        async with get_sessionmaker()() as db:
+            await db.execute(
+                update(ReviewItem).values(due_at=datetime.now(timezone.utc) - timedelta(days=1))
+            )
+            await db.commit()
+
+        items = (await c.get("/review/due", headers=h)).json()
+        assert len(items) == 1
+        item_id = items[0]["id"]
+        target_cid = items[0]["concept_id"]
+
+        r = await c.post("/review/start", json={"review_item_id": item_id}, headers=h)
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["kind"] == "scheduled"
+        assert body["target_concept_id"] == target_cid
+
+
+async def test_review_start_rejects_unknown_id(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        await _seed_with_paper(c, h, monkeypatch)
+        r = await c.post("/review/start", json={"review_item_id": str(uuid4())}, headers=h)
+        assert r.status_code == 404
+
+
+async def test_review_start_rejects_other_users_item(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h1 = await _signup(c)
+        pid, _ = await _seed_with_paper(c, h1, monkeypatch)
+
+        class GW:
+            async def chat(self, messages, stream=False):
+                return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"score":0.85}'))])
+        async def fake(db, u): return GW()
+        monkeypatch.setattr("app.routers.feynman.build_user_gateway", fake)
+
+        sid = (await c.post("/feynman/start", json={"paper_id":pid,"kind":"fresh"}, headers=h1)).json()["id"]
+        await c.post(f"/feynman/{sid}/end", headers=h1)
+        async with get_sessionmaker()() as db:
+            ri = (await db.execute(select(ReviewItem))).scalar_one()
+            iid = str(ri.id)
+
+        h2 = await _signup(c)
+        r = await c.post("/review/start", json={"review_item_id": iid}, headers=h2)
+        assert r.status_code == 404

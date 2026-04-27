@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession
-from app.models import LLMConfig, ReviewItem, concept_model_for
-from app.schemas.review import ReviewItemOut
+from app.models import FeynmanSession, FeynmanKind, LLMConfig, ReviewItem, concept_model_for
+from app.schemas.feynman import FeynmanSessionOut
+from app.schemas.review import ReviewItemOut, ReviewStartIn
+from app.services.feynman import build_system_prompt
 
 router = APIRouter(prefix="/review", tags=["review"])
 
@@ -60,3 +62,59 @@ async def due(user: CurrentUser, db: DbSession) -> list[ReviewItemOut]:
         )
         for r in rows
     ]
+
+
+@router.post("/start", response_model=FeynmanSessionOut, status_code=status.HTTP_201_CREATED)
+async def start_review(
+    data: ReviewStartIn, user: CurrentUser, db: DbSession,
+) -> FeynmanSessionOut:
+    item = (
+        await db.execute(
+            select(ReviewItem).where(
+                ReviewItem.id == data.review_item_id,
+                ReviewItem.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Review item not found")
+
+    ConceptM = concept_model_for(item.embed_dim)
+    concept = (
+        await db.execute(
+            select(ConceptM).where(
+                ConceptM.id == item.concept_id, ConceptM.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if concept is None:
+        raise HTTPException(status_code=404, detail="Concept not found for review item")
+
+    sys_prompt = build_system_prompt(
+        concept_name=concept.name, concept_summary=concept.summary,
+    )
+    transcript = [{
+        "role": "system",
+        "content": sys_prompt,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }]
+    session = FeynmanSession(
+        user_id=user.id,
+        paper_id=None,
+        target_concept_id=concept.id,
+        kind=FeynmanKind.scheduled,
+        embed_dim=item.embed_dim,
+        transcript=transcript,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    visible = [t for t in session.transcript if t.get("role") != "system"]
+    return FeynmanSessionOut(
+        id=session.id, user_id=session.user_id, paper_id=session.paper_id,
+        target_concept_id=session.target_concept_id, kind=session.kind.value,
+        started_at=session.started_at, ended_at=session.ended_at,
+        quality_score=None,
+        transcript=visible,
+    )
