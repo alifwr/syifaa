@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -10,7 +11,7 @@ class LLMConfigIn(BaseModel):
     embed_base_url: HttpUrl
     embed_api_key: str = Field(min_length=1, max_length=500)
     embed_model: str = Field(min_length=1, max_length=200)
-    embed_dim: int = Field(ge=1, le=8192)
+    embed_dim: Literal[768, 1024, 1536]
 
 
 class LLMConfigOut(BaseModel):
