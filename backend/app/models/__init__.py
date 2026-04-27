@@ -11,6 +11,7 @@ from app.models.concept import (
 )
 from app.models.concept_edge import ConceptEdge, EdgeStatus
 from app.models.feynman_session import FeynmanSession, FeynmanKind
+from app.models.review_item import ReviewItem
 
 __all__ = [
     "Base", "User", "OAuthAccount", "LLMConfig",
@@ -19,4 +20,5 @@ __all__ = [
     "Concept768", "Concept1024", "Concept1536", "ConceptStage", "concept_model_for",
     "ConceptEdge", "EdgeStatus",
     "FeynmanSession", "FeynmanKind",
+    "ReviewItem",
 ]
