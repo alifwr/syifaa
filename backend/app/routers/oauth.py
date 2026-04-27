@@ -73,7 +73,7 @@ async def login_start(response: Response):
         max_age=STATE_TTL,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=s.cookie_secure,
     )
     return {"authorization_url": f"{GOOGLE_AUTHZ}?{qs}"}
 

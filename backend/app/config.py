@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     concept_edge_top_k: int = 5
     concept_edge_min_cosine: float = 0.75
     paper_max_bytes: int = 50_000_000
+    cookie_secure: bool = False
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
