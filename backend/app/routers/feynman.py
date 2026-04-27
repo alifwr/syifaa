@@ -19,6 +19,7 @@ from app.schemas.feynman import (
 from app.services.feynman import build_system_prompt, grade_transcript
 from app.services.sse import sse_event, stream_chat
 from app.services.user_llm import build_user_gateway
+from app.config import get_settings
 
 log = logging.getLogger("syifa.feynman")
 router = APIRouter(prefix="/feynman", tags=["feynman"])
@@ -142,6 +143,14 @@ async def message(
         raise HTTPException(status_code=404, detail="Session not found")
     if s.ended_at is not None:
         raise HTTPException(status_code=400, detail="Session already ended")
+
+    settings = get_settings()
+    non_system_turns = sum(1 for t in (s.transcript or []) if t.get("role") != "system")
+    if non_system_turns >= settings.feynman_max_turns:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Max {settings.feynman_max_turns} turns reached; please end the session",
+        )
 
     gw = await build_user_gateway(db, user)
 
