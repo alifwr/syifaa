@@ -4,6 +4,8 @@
       <NuxtLink to="/" class="font-semibold">syifa</NuxtLink>
       <nav class="flex gap-4 text-sm">
         <NuxtLink v-if="auth.isLoggedIn" to="/papers">Papers</NuxtLink>
+        <NuxtLink v-if="auth.isLoggedIn" to="/review">Review</NuxtLink>
+        <NuxtLink v-if="auth.isLoggedIn" to="/dashboard">Dashboard</NuxtLink>
         <NuxtLink to="/settings/llm">LLM</NuxtLink>
         <NuxtLink v-if="!auth.isLoggedIn" to="/login">Login</NuxtLink>
         <button v-else @click="auth.logout()" class="text-neutral-500 hover:underline">Logout</button>
