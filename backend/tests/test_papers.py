@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 from unittest.mock import AsyncMock
 
@@ -72,6 +73,15 @@ async def test_upload_creates_paper_and_runs_ingest(
         r = await c.get(f"/papers/{pid}", headers=h)
         assert r.status_code == 200
         assert r.json()["status"] in ("uploaded", "parsed")
+
+        body: dict = {}
+        for _ in range(50):
+            body = (await c.get(f"/papers/{pid}", headers=h)).json()
+            if body.get("status") == "parsed" and body.get("chunks_count", 0) >= 1:
+                break
+            await asyncio.sleep(0.1)
+        assert body["chunks_count"] >= 1
+        assert body["concepts_count"] >= 1
 
 
 async def test_list_papers_only_returns_own(monkeypatch, s3_bucket, fernet_key, fresh_schema):

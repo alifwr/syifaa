@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 from fastapi import (
     APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy import delete as sa_delete
 
 from app.config import get_settings
@@ -12,6 +12,7 @@ from app.deps import CurrentUser, DbSession
 from app.db import get_sessionmaker
 from app.models import Paper, PaperStatus, LLMConfig
 from app.models import Concept768, Concept1024, Concept1536, ConceptEdge
+from app.models import chunk_model_for, concept_model_for
 from app.schemas.paper import PaperOut
 from app.services.storage import Storage
 from app.services.user_llm import build_user_gateway, NoActiveLLMConfig
@@ -21,11 +22,40 @@ log = logging.getLogger("syifa.papers")
 router = APIRouter(prefix="/papers", tags=["papers"])
 
 
-def _to_out(p: Paper) -> PaperOut:
+async def _resolve_embed_dim(db, user_id) -> int | None:
+    cfg = (
+        await db.execute(
+            select(LLMConfig).where(
+                LLMConfig.user_id == user_id, LLMConfig.is_active.is_(True)
+            )
+        )
+    ).scalar_one_or_none()
+    return cfg.embed_dim if cfg else None
+
+
+async def _to_out_async(db, p: Paper, embed_dim: int | None) -> PaperOut:
+    chunks_count = 0
+    concepts_count = 0
+    if embed_dim is not None:
+        ChunkM = chunk_model_for(embed_dim)
+        ConceptM = concept_model_for(embed_dim)
+        chunks_count = (
+            await db.execute(
+                select(func.count()).select_from(ChunkM).where(ChunkM.paper_id == p.id)
+            )
+        ).scalar() or 0
+        concepts_count = (
+            await db.execute(
+                select(func.count()).select_from(ConceptM)
+                .where(ConceptM.user_id == p.user_id)
+                .where(ConceptM.source_paper_ids.any(p.id))
+            )
+        ).scalar() or 0
     return PaperOut(
         id=p.id, title=p.title, authors=p.authors or "",
         uploaded_at=p.uploaded_at, status=p.status.value,
         parse_error=p.parse_error,
+        chunks_count=chunks_count, concepts_count=concepts_count,
     )
 
 
@@ -91,7 +121,7 @@ async def upload(
     await db.refresh(paper)
 
     bg.add_task(_run_ingest, paper.id, user.id, cfg.embed_dim)
-    return _to_out(paper)
+    return await _to_out_async(db, paper, cfg.embed_dim)
 
 
 @router.get("", response_model=list[PaperOut])
@@ -101,7 +131,8 @@ async def list_(user: CurrentUser, db: DbSession) -> list[PaperOut]:
             select(Paper).where(Paper.user_id == user.id).order_by(Paper.uploaded_at.desc())
         )
     ).scalars().all()
-    return [_to_out(p) for p in rows]
+    dim = await _resolve_embed_dim(db, user.id)
+    return [await _to_out_async(db, p, dim) for p in rows]
 
 
 @router.get("/{pid}", response_model=PaperOut)
@@ -113,7 +144,8 @@ async def get_one(pid: UUID, user: CurrentUser, db: DbSession) -> PaperOut:
     ).scalar_one_or_none()
     if p is None:
         raise HTTPException(status_code=404, detail="Paper not found")
-    return _to_out(p)
+    dim = await _resolve_embed_dim(db, user.id)
+    return await _to_out_async(db, p, dim)
 
 
 @router.post("/{pid}/reingest", response_model=PaperOut)
@@ -141,7 +173,7 @@ async def reingest(
     await db.commit()
     await db.refresh(p)
     bg.add_task(_run_ingest, p.id, user.id, cfg.embed_dim)
-    return _to_out(p)
+    return await _to_out_async(db, p, cfg.embed_dim)
 
 
 async def _prune_concepts_for_paper(db, user_id, pid) -> None:

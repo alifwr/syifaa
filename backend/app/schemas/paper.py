@@ -10,3 +10,5 @@ class PaperOut(BaseModel):
     uploaded_at: datetime
     status: str
     parse_error: str | None = None
+    chunks_count: int = 0
+    concepts_count: int = 0
