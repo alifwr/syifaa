@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    DateTime, Enum as SAEnum, ForeignKey, Numeric, Uuid,
+    DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, Uuid,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -32,6 +32,7 @@ class FeynmanSession(Base):
     kind: Mapped[FeynmanKind] = mapped_column(
         SAEnum(FeynmanKind, name="feynman_kind"), default=FeynmanKind.fresh
     )
+    embed_dim: Mapped[int] = mapped_column(Integer)
 
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

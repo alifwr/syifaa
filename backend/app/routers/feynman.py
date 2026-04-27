@@ -101,6 +101,7 @@ async def start(data: FeynmanStartIn, user: CurrentUser, db: DbSession) -> Feynm
         paper_id=paper.id if paper else None,
         target_concept_id=candidate.id,
         kind=FeynmanKind(data.kind),
+        embed_dim=dim,
         transcript=transcript,
     )
     db.add(session)
