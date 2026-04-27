@@ -1,0 +1,113 @@
+from uuid import uuid4
+import asyncio
+import types
+
+from httpx import AsyncClient, ASGITransport
+from app.main import app
+
+
+def _pdf(t):
+    import fitz
+    d = fitz.open(); d.new_page().insert_text((72,72), t); b = d.tobytes(); d.close(); return b
+
+
+async def _signup(c):
+    email = f"u{uuid4()}@x.y"
+    await c.post("/auth/signup", json={"email": email, "password": "supersecret1"})
+    r = await c.post("/auth/login", json={"email": email, "password": "supersecret1"})
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+async def _seed_with_paper(c, h, monkeypatch):
+    class GW:
+        async def embed(self, texts): return [[0.1]*1536 for _ in texts]
+        async def chat(self, messages, stream=False):
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                message=types.SimpleNamespace(
+                    content='{"concepts":[{"name":"Attention","summary":"focus mech"}]}'))])
+    async def fake(db, u): return GW()
+    monkeypatch.setattr("app.routers.papers.build_user_gateway", fake)
+
+    await c.post("/llm-config", json={
+        "name":"n","chat_base_url":"http://x/v1","chat_api_key":"sk","chat_model":"m",
+        "embed_base_url":"http://x/v1","embed_api_key":"sk","embed_model":"em","embed_dim":1536,
+    }, headers=h)
+    cid = (await c.get("/llm-config", headers=h)).json()[0]["id"]
+    await c.post(f"/llm-config/{cid}/activate", headers=h)
+    pid = (await c.post("/papers", headers=h,
+                        files={"file":("p.pdf", _pdf("hi"), "application/pdf")},
+                        data={"title":"A"})).json()["id"]
+    for _ in range(50):
+        rs = (await c.get("/concepts", headers=h)).json()
+        if rs: break
+        await asyncio.sleep(0.1)
+    return pid, rs[0]
+
+
+async def test_start_session_picks_concept_and_seeds_transcript(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        pid, concept = await _seed_with_paper(c, h, monkeypatch)
+        r = await c.post(
+            "/feynman/start",
+            json={"paper_id": pid, "kind": "fresh"},
+            headers=h,
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["target_concept_id"] == concept["id"]
+        assert body["kind"] == "fresh"
+        assert body["paper_id"] == pid
+        assert any(t["role"] == "system" for t in body["transcript"])
+
+
+async def test_start_session_without_paper_picks_any_concept(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        await _seed_with_paper(c, h, monkeypatch)
+        r = await c.post(
+            "/feynman/start",
+            json={"paper_id": None, "kind": "scheduled"},
+            headers=h,
+        )
+        assert r.status_code == 201
+        assert r.json()["paper_id"] is None
+        assert r.json()["kind"] == "scheduled"
+
+
+async def test_start_without_concepts_returns_400(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        await c.post("/llm-config", json={
+            "name":"n","chat_base_url":"http://x/v1","chat_api_key":"sk","chat_model":"m",
+            "embed_base_url":"http://x/v1","embed_api_key":"sk","embed_model":"em","embed_dim":1536,
+        }, headers=h)
+        cid = (await c.get("/llm-config", headers=h)).json()[0]["id"]
+        await c.post(f"/llm-config/{cid}/activate", headers=h)
+        r = await c.post("/feynman/start", json={"kind":"fresh"}, headers=h)
+        assert r.status_code == 400
+
+
+async def test_get_session_only_visible_to_owner(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h1 = await _signup(c)
+        await _seed_with_paper(c, h1, monkeypatch)
+        sid = (await c.post("/feynman/start", json={"kind":"fresh"}, headers=h1)).json()["id"]
+
+        h2 = await _signup(c)
+        r = await c.get(f"/feynman/{sid}", headers=h2)
+        assert r.status_code == 404
+        r = await c.get(f"/feynman/{sid}", headers=h1)
+        assert r.status_code == 200
