@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 from uuid import UUID
 
@@ -11,8 +11,9 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.db import get_sessionmaker
 from app.deps import CurrentUser, DbSession
 from app.models import (
-    FeynmanSession, FeynmanKind, LLMConfig, Paper, concept_model_for,
+    FeynmanSession, FeynmanKind, LLMConfig, Paper, ReviewItem, concept_model_for,
 )
+from app.services.sm2 import sm2_update
 from app.schemas.feynman import (
     FeynmanStartIn, FeynmanSessionOut, FeynmanMessageIn, FeynmanGradeOut,
 )
@@ -224,6 +225,38 @@ async def end(sid: UUID, user: CurrentUser, db: DbSession) -> FeynmanGradeOut:
     gw = await build_user_gateway(db, user)
     msgs = [t for t in (s.transcript or []) if t.get("role") in ("user", "assistant")]
     score = await grade_transcript(gw, msgs)
+
+    ri = (
+        await db.execute(
+            select(ReviewItem).where(
+                ReviewItem.user_id == user.id,
+                ReviewItem.concept_id == s.target_concept_id,
+                ReviewItem.embed_dim == s.embed_dim,
+            )
+        )
+    ).scalar_one_or_none()
+    if ri is None:
+        new_ease, new_interval = sm2_update(ease=2.5, interval_days=0, quality=score)
+        ri = ReviewItem(
+            user_id=user.id,
+            concept_id=s.target_concept_id,
+            embed_dim=s.embed_dim,
+            ease=new_ease,
+            interval_days=new_interval,
+            due_at=datetime.now(timezone.utc) + timedelta(days=new_interval),
+            last_session_id=s.id,
+            last_score=score,
+        )
+        db.add(ri)
+    else:
+        new_ease, new_interval = sm2_update(
+            ease=ri.ease, interval_days=ri.interval_days, quality=score,
+        )
+        ri.ease = new_ease
+        ri.interval_days = new_interval
+        ri.due_at = datetime.now(timezone.utc) + timedelta(days=new_interval)
+        ri.last_session_id = s.id
+        ri.last_score = score
 
     s.ended_at = datetime.now(timezone.utc)
     s.quality_score = score

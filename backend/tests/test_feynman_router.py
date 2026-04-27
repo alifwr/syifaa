@@ -238,3 +238,75 @@ async def test_end_session_idempotent_returns_existing(
         r2 = await c.post(f"/feynman/{sid}/end", headers=h)
         assert r2.status_code == 200
         assert r2.json()["quality_score"] == s1
+
+
+async def test_end_upserts_review_item(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        pid, concept = await _seed_with_paper(c, h, monkeypatch)
+
+        class GW:
+            async def chat(self, messages, stream=False):
+                return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"score": 0.85}'))])
+
+        async def fake(db, u): return GW()
+        monkeypatch.setattr("app.routers.feynman.build_user_gateway", fake)
+
+        sid = (await c.post("/feynman/start", json={"paper_id": pid, "kind":"fresh"}, headers=h)).json()["id"]
+        await c.post(f"/feynman/{sid}/end", headers=h)
+
+        from uuid import UUID
+        from sqlalchemy import select
+        from app.db import get_sessionmaker
+        from app.models import ReviewItem
+        async with get_sessionmaker()() as db:
+            ri = (await db.execute(
+                select(ReviewItem).where(ReviewItem.concept_id == UUID(concept["id"]))
+            )).scalar_one()
+        assert ri.embed_dim == 1536
+        assert ri.last_score is not None
+        assert abs(float(ri.last_score) - 0.85) < 1e-9
+        assert ri.interval_days == 1  # first pass
+        assert ri.last_session_id == UUID(sid)
+
+
+async def test_end_second_pass_extends_interval(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        pid, concept = await _seed_with_paper(c, h, monkeypatch)
+
+        class GW:
+            async def chat(self, messages, stream=False):
+                return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"score": 1.0}'))])
+
+        async def fake(db, u): return GW()
+        monkeypatch.setattr("app.routers.feynman.build_user_gateway", fake)
+
+        sid1 = (await c.post("/feynman/start", json={"paper_id": pid, "kind":"fresh"}, headers=h)).json()["id"]
+        await c.post(f"/feynman/{sid1}/end", headers=h)
+        sid2 = (await c.post("/feynman/start", json={"paper_id": pid, "kind":"scheduled"}, headers=h)).json()["id"]
+        await c.post(f"/feynman/{sid2}/end", headers=h)
+
+        from uuid import UUID
+        from sqlalchemy import select, func
+        from app.db import get_sessionmaker
+        from app.models import ReviewItem
+        async with get_sessionmaker()() as db:
+            n = (await db.execute(
+                select(func.count()).select_from(ReviewItem)
+                .where(ReviewItem.concept_id == UUID(concept["id"]))
+            )).scalar()
+            ri = (await db.execute(
+                select(ReviewItem).where(ReviewItem.concept_id == UUID(concept["id"]))
+            )).scalar_one()
+        assert n == 1, "second end must update existing review_item, not insert"
+        assert ri.interval_days == 6  # 1 → 6 on the second pass
+        assert ri.last_session_id == UUID(sid2)
