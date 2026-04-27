@@ -12,6 +12,11 @@
               class="rounded border border-neutral-300 dark:border-neutral-700 px-3 py-2 text-sm">
         Reingest
       </button>
+      <button v-if="paper.status === 'parsed' && paper.concepts_count > 0"
+              @click="startFeynman"
+              class="rounded bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 px-3 py-2 text-sm">
+        Teach me back
+      </button>
       <button @click="remove" class="rounded border border-red-500 text-red-600 px-3 py-2 text-sm">
         Delete
       </button>
@@ -25,6 +30,8 @@
 type Paper = {
   id: string; title: string; uploaded_at: string; status: string;
   parse_error: string | null;
+  chunks_count: number;
+  concepts_count: number;
 }
 const { call } = useApi()
 const route = useRoute()
@@ -53,5 +60,12 @@ async function reingest() {
 async function remove() {
   await call(`/papers/${route.params.id}`, { method: "DELETE" })
   await router.push("/papers")
+}
+async function startFeynman() {
+  const r = await call<{ id: string }>("/feynman/start", {
+    method: "POST",
+    body: JSON.stringify({ paper_id: route.params.id, kind: "fresh" }),
+  })
+  await router.push(`/feynman/${r.id}`)
 }
 </script>
