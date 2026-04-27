@@ -8,6 +8,7 @@ Design and implementation plans live under `docs/superpowers/`:
 - Spec: `docs/superpowers/specs/2026-04-23-phd-study-companion-design.md`
 - Plan 1 (foundation): `docs/superpowers/plans/2026-04-23-foundation.md`
 - Plan 2 (paper library): `docs/superpowers/plans/2026-04-24-paper-library.md`
+- Plan 3 (Feynman engine): `docs/superpowers/plans/2026-04-27-feynman-engine.md`
 
 ## Dev bootstrap
 
@@ -68,20 +69,20 @@ syifa/
 │   │   ├── db.py                async engine + session dep + dispose_engine
 │   │   ├── deps.py              DbSession, CurrentUser
 │   │   ├── security.py          bcrypt (SHA-256 pre-hash), JWT, Fernet
-│   │   ├── models/              User, OAuthAccount, LLMConfig, Paper, per-dim PaperChunk/Concept, ConceptEdge
+│   │   ├── models/              User, OAuthAccount, LLMConfig, Paper, per-dim PaperChunk/Concept, ConceptEdge, FeynmanSession
 │   │   ├── schemas/             Pydantic I/O models
-│   │   ├── routers/             auth, oauth (Google + state CSRF), llm_config, papers, concepts
-│   │   └── services/            llm_gateway, user_llm (factory), storage (S3), pdf_ingest, ingest (pipeline)
+│   │   ├── routers/             auth, oauth (Google + state CSRF), llm_config, papers, concepts, feynman
+│   │   └── services/            llm_gateway, user_llm (factory), storage (S3), pdf_ingest, ingest (pipeline), sse, feynman
 │   ├── alembic/                 migrations
 │   └── tests/
 ├── frontend/                    Nuxt 4 (srcDir=app/)
 │   ├── app/
-│   │   ├── pages/               index, login, signup, settings/llm, papers (list + [id]), auth/google/callback
+│   │   ├── pages/               index, login, signup, settings/llm, papers (list + [id]), feynman/[sid], auth/google/callback
 │   │   ├── stores/auth.ts       Pinia auth store
-│   │   ├── composables/useApi.ts  call() + callUpload() with 401-refresh retry
+│   │   ├── composables/         useApi (call + callUpload), useStream (fetch+ReadableStream SSE)
 │   │   ├── middleware/auth.global.ts
 │   │   └── assets/css/main.css  Tailwind v4
-│   └── tests/e2e/               foundation + papers
+│   └── tests/e2e/               foundation + papers + feynman
 ├── docs/superpowers/            spec + plans
 └── docker-compose.yml           Postgres 16 + pgvector for local dev
 ```
@@ -103,6 +104,14 @@ syifa/
 - `GET /concepts` — list a user's concepts scoped to their active `embed_dim`.
 - Frontend: `/papers` list + upload form (status polling), `/papers/:id` detail with reingest + delete.
 
+### Plan 3 (Feynman engine)
+- `POST /feynman/start` — picks a target concept (paper-scoped if `paper_id` given, else any of user's), seeds transcript with curious-student system prompt.
+- `GET /feynman/:sid` — owner-scoped session detail.
+- `POST /feynman/:sid/message` — appends user turn, streams the model reply over SSE (`text/event-stream`), persists assistant turn on completion. Frontend uses `fetch` + `ReadableStream` (so it can send the bearer token) instead of `EventSource`.
+- `POST /feynman/:sid/end` — grades the transcript via a JSON-mode LLM call, persists `quality_score` + `ended_at`, idempotent.
+- Frontend: `/feynman/[sid]` chat page with streaming buffer + end button + score display. "Teach me back" button on `/papers/:id` (visible when `parsed && concepts_count > 0`) starts a fresh session and routes to it.
+- Plan 2 reviewer carries: `embed_dim` constrained to `Literal[768, 1024, 1536]`; switching dim mid-data returns 409; concept idempotency across reingest (case-insensitive name match, merges `source_paper_ids`); `DELETE /papers/:id` prunes orphan concepts and edges; PDF upload size cap (`PAPER_MAX_BYTES`, default 50 MB) + `%PDF-` magic-byte check; OAuth state cookie `Secure` flag now driven by `cookie_secure` setting; `PaperOut` exposes `chunks_count` + `concepts_count`.
+
 ## What's next
 
-- **Plan 3 (Feynman + scheduler + dashboard):** SSE chat, SM-2 review queue, concept-count + quality-score trend chart.
+- **Plan 4 (scheduler + dashboard):** SM-2 review queue, `/review/due` endpoint, scheduled Feynman sessions, dashboard with concept-count + quality-score trend chart.
