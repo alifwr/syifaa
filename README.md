@@ -9,6 +9,7 @@ Design and implementation plans live under `docs/superpowers/`:
 - Plan 1 (foundation): `docs/superpowers/plans/2026-04-23-foundation.md`
 - Plan 2 (paper library): `docs/superpowers/plans/2026-04-24-paper-library.md`
 - Plan 3 (Feynman engine): `docs/superpowers/plans/2026-04-27-feynman-engine.md`
+- Plan 4 (scheduler + dashboard): `docs/superpowers/plans/2026-04-27-scheduler-dashboard.md`
 
 ## Dev bootstrap
 
@@ -69,20 +70,20 @@ syifa/
 │   │   ├── db.py                async engine + session dep + dispose_engine
 │   │   ├── deps.py              DbSession, CurrentUser
 │   │   ├── security.py          bcrypt (SHA-256 pre-hash), JWT, Fernet
-│   │   ├── models/              User, OAuthAccount, LLMConfig, Paper, per-dim PaperChunk/Concept, ConceptEdge, FeynmanSession
+│   │   ├── models/              User, OAuthAccount, LLMConfig, Paper, per-dim PaperChunk/Concept, ConceptEdge, FeynmanSession, ReviewItem
 │   │   ├── schemas/             Pydantic I/O models
-│   │   ├── routers/             auth, oauth (Google + state CSRF), llm_config, papers, concepts, feynman
-│   │   └── services/            llm_gateway, user_llm (factory), storage (S3), pdf_ingest, ingest (pipeline), sse, feynman
+│   │   ├── routers/             auth, oauth (Google + state CSRF), llm_config, papers, concepts, feynman, review, dashboard
+│   │   └── services/            llm_gateway, user_llm (factory), storage (S3), pdf_ingest, ingest (pipeline), sse, feynman, sm2
 │   ├── alembic/                 migrations
 │   └── tests/
 ├── frontend/                    Nuxt 4 (srcDir=app/)
 │   ├── app/
-│   │   ├── pages/               index, login, signup, settings/llm, papers (list + [id]), feynman/[sid], auth/google/callback
+│   │   ├── pages/               index, login, signup, settings/llm, papers (list + [id]), feynman/[sid], review, dashboard, auth/google/callback
 │   │   ├── stores/auth.ts       Pinia auth store
 │   │   ├── composables/         useApi (call + callUpload), useStream (fetch+ReadableStream SSE)
 │   │   ├── middleware/auth.global.ts
 │   │   └── assets/css/main.css  Tailwind v4
-│   └── tests/e2e/               foundation + papers + feynman
+│   └── tests/e2e/               foundation + papers + feynman + dashboard + review
 ├── docs/superpowers/            spec + plans
 └── docker-compose.yml           Postgres 16 + pgvector for local dev
 ```
@@ -112,6 +113,16 @@ syifa/
 - Frontend: `/feynman/[sid]` chat page with streaming buffer + end button + score display. "Teach me back" button on `/papers/:id` (visible when `parsed && concepts_count > 0`) starts a fresh session and routes to it.
 - Plan 2 reviewer carries: `embed_dim` constrained to `Literal[768, 1024, 1536]`; switching dim mid-data returns 409; concept idempotency across reingest (case-insensitive name match, merges `source_paper_ids`); `DELETE /papers/:id` prunes orphan concepts and edges; PDF upload size cap (`PAPER_MAX_BYTES`, default 50 MB) + `%PDF-` magic-byte check; OAuth state cookie `Secure` flag now driven by `cookie_secure` setting; `PaperOut` exposes `chunks_count` + `concepts_count`.
 
+### Plan 4 (scheduler + dashboard) — v1 feature-complete
+- SM-2 spaced repetition: `sm2_update(ease, interval_days, quality)` pure function with ease clamping `[1.3, 3.0]` and lapse-on-low-quality.
+- `review_item` table with `(user_id, concept_id, embed_dim)` uniqueness; SM-2 state per concept.
+- `POST /feynman/:sid/end` upserts the matching `review_item` atomically with the session grade.
+- `GET /review/due` — items past `due_at` joined to concept names, scoped to active dim.
+- `POST /review/start` — mints a scheduled `FeynmanSession` for a review item.
+- `GET /dashboard` — concept count + last 30 ended sessions with `(started_at, quality_score)`.
+- Frontend: `/review` queue with start CTA, `/dashboard` count tile + score table; nav links auth-gated.
+- Plan 3 reviewer carries: streaming `/message` uses a self-managed session inside the SSE generator; `feynman_session.embed_dim` pinned at start with `(user_id, started_at desc)` index; `FEYNMAN_MAX_TURNS` setting caps transcript size; concept-idempotency test uses correct payload-cycle indexing.
+
 ## What's next
 
-- **Plan 4 (scheduler + dashboard):** SM-2 review queue, `/review/due` endpoint, scheduled Feynman sessions, dashboard with concept-count + quality-score trend chart.
+v1 is feature-complete. v2 candidates per spec §9: concept-map visualization (force-directed graph or hierarchical), edge-curation UI, atom-card flashcards (extraction strategy TBD), OCR for scanned PDFs, dim-transition migrator, paper deduplication via `text_hash`.
