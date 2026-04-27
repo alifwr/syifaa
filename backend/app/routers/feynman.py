@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.db import get_sessionmaker
 from app.deps import CurrentUser, DbSession
 from app.models import (
     FeynmanSession, FeynmanKind, LLMConfig, Paper, concept_model_for,
@@ -149,6 +150,7 @@ async def message(
     await db.commit()
 
     llm_msgs = [{"role": t["role"], "content": t["content"]} for t in s.transcript]
+    user_id = user.id
 
     async def gen() -> AsyncIterator[bytes]:
         full: list[str] = []
@@ -165,16 +167,21 @@ async def message(
         finally:
             assistant = "".join(full).strip()
             if assistant:
-                fresh = (
-                    await db.execute(
-                        select(FeynmanSession).where(FeynmanSession.id == sid)
-                    )
-                ).scalar_one()
-                fresh.transcript = list(fresh.transcript or []) + [{
-                    "role": "assistant", "content": assistant, "ts": _now_iso(),
-                }]
-                flag_modified(fresh, "transcript")
-                await db.commit()
+                maker = get_sessionmaker()
+                async with maker() as bg_db:
+                    fresh = (
+                        await bg_db.execute(
+                            select(FeynmanSession).where(
+                                FeynmanSession.id == sid,
+                                FeynmanSession.user_id == user_id,
+                            )
+                        )
+                    ).scalar_one()
+                    fresh.transcript = list(fresh.transcript or []) + [{
+                        "role": "assistant", "content": assistant, "ts": _now_iso(),
+                    }]
+                    flag_modified(fresh, "transcript")
+                    await bg_db.commit()
             yield sse_event("[DONE]")
 
     return StreamingResponse(
