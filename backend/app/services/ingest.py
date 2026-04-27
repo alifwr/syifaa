@@ -82,8 +82,26 @@ async def ingest_paper(
             names = [c["name"] for c in concept_records]
             concept_embeds = await gateway.embed(names)
             ConceptM = concept_model_for(embed_dim)
-            new_concepts = []
+            existing_rows = (
+                await db.execute(
+                    select(ConceptM).where(ConceptM.user_id == paper.user_id)
+                )
+            ).scalars().all()
+            by_lname = {r.name.lower(): r for r in existing_rows}
+
+            new_concepts: list = []
+            touched: list = []
             for rec, vec in zip(concept_records, concept_embeds):
+                lname = rec["name"].strip().lower()
+                if not lname:
+                    continue
+                hit = by_lname.get(lname)
+                if hit is not None:
+                    if paper.id not in (hit.source_paper_ids or []):
+                        # SQLAlchemy ARRAY mutation needs reassignment to fire dirty-tracking.
+                        hit.source_paper_ids = list(hit.source_paper_ids or []) + [paper.id]
+                    touched.append(hit)
+                    continue
                 obj = ConceptM(
                     user_id=paper.user_id,
                     name=rec["name"][:500],
@@ -93,11 +111,12 @@ async def ingest_paper(
                 )
                 db.add(obj)
                 new_concepts.append(obj)
+                by_lname[lname] = obj
             await db.flush()  # assign IDs before building edges
 
             # Propose edges: cosine to existing concepts of same user.
             await _propose_edges(
-                db, ConceptM, new_concepts, user_id=paper.user_id,
+                db, ConceptM, new_concepts + touched, user_id=paper.user_id,
                 top_k=settings.concept_edge_top_k,
                 min_cos=settings.concept_edge_min_cosine,
             )
