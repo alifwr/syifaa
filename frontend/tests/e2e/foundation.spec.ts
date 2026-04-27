@@ -1,10 +1,62 @@
 import { test, expect } from "@playwright/test"
 
 const unique = () => `u${Date.now()}@test.example`
+const API = "http://localhost:8000"
 
 test("signup, save llm config, test connection surfaces a result", async ({ page }) => {
   const email = unique()
   const password = "correct horse battery staple"
+
+  const cfgId = "00000000-0000-0000-0000-000000000099"
+
+  // Stub auth so tests run without a live backend
+  await page.route(`${API}/auth/signup`, async (route) => {
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({}) })
+  })
+  await page.route(`${API}/auth/login`, async (route) => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ access_token: "tok", refresh_token: "rtok", token_type: "bearer" }),
+    })
+  })
+  await page.route(`${API}/auth/me`, async (route) => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ id: "u1", email }),
+    })
+  })
+
+  // Stub LLM config endpoints
+  let savedConfig: object | null = null
+  await page.route(`${API}/llm-config`, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify(savedConfig
+          ? [savedConfig]
+          : []),
+      })
+    } else {
+      // POST — save and return the new config
+      savedConfig = {
+        id: cfgId, name: "fake",
+        chat_model: "fake-chat", embed_model: "fake-embed", embed_dim: 1536,
+        is_active: false,
+        chat_base_url: "http://127.0.0.1:9/v1",
+        embed_base_url: "http://127.0.0.1:9/v1",
+      }
+      await route.fulfill({
+        status: 201, contentType: "application/json",
+        body: JSON.stringify(savedConfig),
+      })
+    }
+  })
+  await page.route(`${API}/llm-config/${cfgId}/test`, async (route) => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ chat: "ok", embed: "ok" }),
+    })
+  })
 
   await page.goto("/signup", { waitUntil: "networkidle" })
   await page.fill('input[type="email"]', email)
