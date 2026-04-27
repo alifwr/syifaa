@@ -17,6 +17,11 @@ dist/
 .env.*
 !.env.example
 
+# playwright
+playwright-report/
+test-results/
+playwright/.cache/
+
 # editor / os
 .DS_Store
 .vscode/

@@ -1,0 +1,11 @@
+node_modules
+.nuxt
+.output
+.env
+.env.*
+tests
+playwright-report
+playwright/.cache
+test-results
+Dockerfile
+.dockerignore

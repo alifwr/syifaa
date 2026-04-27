@@ -3,10 +3,94 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: syifa
-      POSTGRES_PASSWORD: syifa_dev
-      POSTGRES_DB: syifa
+      POSTGRES_USER: ${POSTGRES_USER:-syifa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-syifa_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-syifa}
     ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-syifa} -d ${POSTGRES_DB:-syifa}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  localstack:
+    image: localstack/localstack:3
+    restart: unless-stopped
+    environment:
+      SERVICES: s3
+      DEBUG: 0
+    ports: ["4566:4566"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4566/_localstack/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  bucket-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-test}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-test}
+      AWS_DEFAULT_REGION: ${S3_REGION:-us-east-1}
+    entrypoint: ["/bin/sh", "-c"]
+    # `mb` returns non-zero if the bucket exists; `|| true` makes the init idempotent.
+    command:
+      - "aws --endpoint-url=http://localstack:4566 s3 mb s3://${S3_BUCKET:-syifa-papers} || true"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      bucket-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-syifa}:${POSTGRES_PASSWORD:-syifa_dev}@db:5432/${POSTGRES_DB:-syifa}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_TTL_MIN: ${JWT_ACCESS_TTL_MIN:-30}
+      JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-30}
+      FERNET_KEY: ${FERNET_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3000/auth/google/callback}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      S3_ENDPOINT_URL: http://localstack:4566
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-syifa-papers}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-test}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-test}
+      PAPER_MAX_BYTES: ${PAPER_MAX_BYTES:-50000000}
+      PAPER_CHUNK_MAX_TOKENS: ${PAPER_CHUNK_MAX_TOKENS:-800}
+      PAPER_CHUNK_OVERLAP: ${PAPER_CHUNK_OVERLAP:-100}
+      CONCEPT_EDGE_TOP_K: ${CONCEPT_EDGE_TOP_K:-5}
+      CONCEPT_EDGE_MIN_COSINE: ${CONCEPT_EDGE_MIN_COSINE:-0.75}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      FEYNMAN_MAX_TURNS: ${FEYNMAN_MAX_TURNS:-60}
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8000}
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports: ["3000:3000"]
+
 volumes:
   pgdata:
