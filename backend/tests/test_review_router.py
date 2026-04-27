@@ -117,14 +117,17 @@ async def test_review_due_skips_future_dues(
         assert r.json() == []
 
 
-async def test_review_due_without_active_config_returns_400(
+async def test_review_due_without_active_config_returns_empty(
     monkeypatch, s3_bucket, fernet_key, fresh_schema,
 ):
+    # Mirrors /dashboard's empty-state contract: no active config means
+    # "nothing to review", not a 400.
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         h = await _signup(c)
         r = await c.get("/review/due", headers=h)
-        assert r.status_code == 400
+        assert r.status_code == 200
+        assert r.json() == []
 
 
 async def test_review_start_creates_scheduled_session(

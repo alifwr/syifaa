@@ -25,9 +25,12 @@ async def _resolve_active_dim(db, user_id) -> int | None:
 
 @router.get("/due", response_model=list[ReviewItemOut])
 async def due(user: CurrentUser, db: DbSession) -> list[ReviewItemOut]:
+    # Mirror /dashboard's empty-state shape: "no active config" reads as
+    # "nothing to review" rather than 400. Avoids inconsistent contracts
+    # between two endpoints with the same precondition.
     dim = await _resolve_active_dim(db, user.id)
     if dim is None:
-        raise HTTPException(status_code=400, detail="No active LLM config")
+        return []
 
     ConceptM = concept_model_for(dim)
     now = datetime.now(timezone.utc)

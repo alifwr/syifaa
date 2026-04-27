@@ -14,8 +14,11 @@ def test_second_pass_high_quality_sets_six_days():
 
 
 def test_third_pass_multiplies_by_ease():
+    # Canonical Wozniak SM-2: I(n) = I(n-1) * EF where EF is the post-update
+    # easiness. q=1.0 with prior ease 2.5 yields delta=0.1 → new_ease=2.6,
+    # so interval becomes round(6 * 2.6) = 16.
     _, interval = sm2_update(ease=2.5, interval_days=6, quality=1.0)
-    assert interval == 15
+    assert interval == 16
 
 
 def test_low_quality_resets_streak():

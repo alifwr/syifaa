@@ -310,3 +310,41 @@ async def test_end_second_pass_extends_interval(
         assert n == 1, "second end must update existing review_item, not insert"
         assert ri.interval_days == 6  # 1 → 6 on the second pass
         assert ri.last_session_id == UUID(sid2)
+
+
+async def test_double_end_does_not_compound_sm2(
+    monkeypatch, s3_bucket, fernet_key, fresh_schema,
+):
+    """Calling /end twice on the same session must NOT run SM-2 twice.
+    Idempotency guard short-circuits before SM-2 fires."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        h = await _signup(c)
+        pid, concept = await _seed_with_paper(c, h, monkeypatch)
+
+        class GW:
+            async def chat(self, messages, stream=False):
+                return types.SimpleNamespace(choices=[types.SimpleNamespace(
+                    message=types.SimpleNamespace(content='{"score": 1.0}'))])
+
+        async def fake(db, u): return GW()
+        monkeypatch.setattr("app.routers.feynman.build_user_gateway", fake)
+
+        sid = (await c.post("/feynman/start", json={"paper_id": pid, "kind":"fresh"}, headers=h)).json()["id"]
+        await c.post(f"/feynman/{sid}/end", headers=h)
+        # Second end must not compound: interval should stay at 1 (first pass),
+        # not advance to 6 (which would happen if SM-2 ran a second time).
+        await c.post(f"/feynman/{sid}/end", headers=h)
+
+        from uuid import UUID
+        from sqlalchemy import select
+        from app.db import get_sessionmaker
+        from app.models import ReviewItem
+        async with get_sessionmaker()() as db:
+            ri = (await db.execute(
+                select(ReviewItem).where(ReviewItem.concept_id == UUID(concept["id"]))
+            )).scalar_one()
+        assert ri.interval_days == 1, (
+            f"SM-2 must not run twice on a re-ended session "
+            f"(interval={ri.interval_days}; would be 6 if compounded)"
+        )
